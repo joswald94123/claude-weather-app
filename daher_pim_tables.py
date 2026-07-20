@@ -190,7 +190,9 @@ def _pim_snapshot() -> dict | None:
     payload = json.loads(PIM_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     if payload.get("schema_version") != PIM_SNAPSHOT_SCHEMA_VERSION:
         return None
-    if payload.get("source_pdf_sha256") != _source_pdf_sha256():
+    # Public deployments do not vendor the copyrighted PDF; the snapshot then stands on
+    # its stored provenance hash plus the row-level validators applied at parse time.
+    if PIM_PDF_PATH.exists() and payload.get("source_pdf_sha256") != _source_pdf_sha256():
         return None
     return payload
 

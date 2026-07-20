@@ -5,8 +5,13 @@ Streamlit app for TBM 960 mission planning with live NOAA aviation weather, rout
 > Parallel implementation forked from CODEX-Weather-Brief at `28b2dc9`
 > (v2026.07.20.13) on 2026-07-20. The upstream project continues independently;
 > this repo evolves per `CLAUDE_ROADMAP.md`. Deployed as **claude-weather-app**
-> on Streamlit Community Cloud. Private repo — the vendored Daher PIM PDF is
-> copyrighted material.
+> on Streamlit Community Cloud.
+>
+> **Disclaimer:** personal flight-planning aid for one owner's TBM 960 — not an
+> official Daher product and not for operational or navigational use. The
+> copyrighted Daher PIM PDF is **not** distributed in this repo; performance
+> values load from `assets/pim_tables_snapshot.json`, which records the SHA-256
+> of the owner's source manual for provenance.
 
 ## What The App Uses As Inputs
 
@@ -33,10 +38,8 @@ Derived inputs:
 
 Local reference docs:
 
-- `assets/reference_docs/FAA_PHAK_Chapter_08_Flight_Instruments.pdf`
-- `assets/reference_docs/FAA_PHAK_Chapter_11_Aircraft_Performance.pdf`
-- `assets/reference_docs/FAA_Aircraft_Dynamics_Model.pdf`
-- `assets/reference_docs/README.md`
+- FAA PHAK chapters 8/11 and the FAA Aircraft Dynamics Model (public-domain FAA
+  handbooks; not vendored here — see faa.gov links in the upstream project)
 
 ## Airport Data Source
 
@@ -279,7 +282,7 @@ python -m pytest -q
 - `performance_profiles.py`: official-performance profile builder and interpolation helpers driven by the extracted Daher PIM tables
 - `daher_pim_tables.py`: parser/extraction layer for the vendored Daher PIM source tables
 - `route_context_map.py`: static route-context map builder using the local U.S. Census state boundary asset
-- `assets/manuals/PIM_TBM960E0R1_DRAFT.pdf`: vendored Daher PIM source PDF used for the extracted performance tables
+- `assets/pim_tables_snapshot.json`: validated Daher PIM performance tables (the copyrighted source PDF is not distributed; the snapshot stores its SHA-256 for provenance)
 - `assets/cb_2023_us_state_20m.zip`: official U.S. Census 2023 20m KML state boundaries used for the route-context map
 - `tests/test_weather_core.py`: unit tests
 - `tests/test_daher_pim_tables.py`: Daher table extraction tests

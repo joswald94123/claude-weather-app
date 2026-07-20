@@ -11,7 +11,8 @@ from daher_pim_tables import (
     CRUISE_MODE_METADATA,
     CRUISE_WEIGHTS_LB,
     DESCENT_RATES_FPM,
-    PIM_PDF_PATH,
+    PIM_SNAPSHOT_PATH,
+    PIM_SNAPSHOT_SCHEMA_VERSION,
     climb_rows_for_weight,
     cruise_rows_for_weight,
     descent_rows_for_rate,
@@ -33,10 +34,11 @@ def test_every_mapped_pim_page_has_the_complete_altitude_sequence():
     assert len(parse_descent_table("230_kcas")) == 17
 
 
-def test_vendored_daher_pdf_is_present():
-    """Verify that vendored daher pdf is present."""
+def test_checked_in_snapshot_is_present_and_current_schema():
+    """Verify the shipped snapshot exists; the copyrighted PDF is not distributed."""
 
-    assert PIM_PDF_PATH.exists()
+    assert PIM_SNAPSHOT_PATH.exists()
+    assert daher_pim_tables._pim_snapshot()["schema_version"] == PIM_SNAPSHOT_SCHEMA_VERSION
 
 
 def test_matching_snapshot_loads_without_opening_the_pdf(monkeypatch):

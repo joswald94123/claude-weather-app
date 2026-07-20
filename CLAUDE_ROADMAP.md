@@ -47,4 +47,7 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
 - The upstream CODEX repo is read-only reference; never push changes there.
 - Keep the 157+ test suite green and ruff clean at every commit; bump
   `RELEASE_VERSION` on every main push (CI enforces).
-- The vendored Daher PIM PDF is copyrighted: this repo must remain private.
+- Public repo: the copyrighted Daher PIM PDF is NOT distributed here and must
+  never be committed. Performance data ships as the validated JSON snapshot;
+  rebuilding the snapshot requires the owner's local PDF copy. If this app
+  later replaces the upstream deployment, the repo returns to private.

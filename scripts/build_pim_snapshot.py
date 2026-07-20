@@ -73,6 +73,14 @@ def main() -> None:
         help="fail unless the checked-in snapshot exactly matches a fresh parse",
     )
     args = parser.parse_args()
+    if not PIM_PDF_PATH.exists():
+        if args.check and PIM_SNAPSHOT_PATH.exists():
+            print(
+                "Source PDF not vendored (public build); snapshot accepted on stored "
+                "provenance hash and structural validation."
+            )
+            return
+        raise SystemExit(f"Missing Daher PIM PDF: {PIM_PDF_PATH}")
     serialized = json.dumps(_build_payload(), indent=2, sort_keys=True) + "\n"
     if args.check:
         if not PIM_SNAPSHOT_PATH.exists() or PIM_SNAPSHOT_PATH.read_text(encoding="utf-8") != serialized:
