@@ -1,0 +1,6 @@
+# Exact CI/development tools layered over requirements.lock.
+-r requirements.lock
+iniconfig==2.3.0
+pluggy==1.6.0
+pytest==8.4.2
+ruff==0.15.22

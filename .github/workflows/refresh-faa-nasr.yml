@@ -1,0 +1,79 @@
+name: Refresh FAA NASR fallback
+
+on:
+  schedule:
+    # FAA AIRAC cycles become effective on Thursdays. A weekly check also
+    # tolerates publication delays without encoding future dates here.
+    - cron: "30 15 * * 4"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.lock
+
+      - name: Check and rebuild FAA fallback
+        id: rebuild
+        shell: bash
+        run: |
+          python scripts/build_faa_nasr_fallback.py
+          if git diff --quiet -- assets/faa_nasr_fallback.json.gz; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate refreshed cycles
+        if: steps.rebuild.outputs.changed == 'true'
+        run: |
+          python scripts/bump_release_version.py
+          python scripts/build_pim_snapshot.py --check
+          python -m compileall -q -x '(^|/)(\.git|\.venv|prior)(/|$)' .
+          python -m ruff check .
+          python -m pytest -q
+
+      - name: Create or update refresh pull request
+        if: steps.rebuild.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          branch="automation/faa-nasr-refresh"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add RELEASE_VERSION assets/faa_nasr_fallback.json.gz
+          git commit -m "Refresh FAA NASR fallback cycles"
+          git push --force-with-lease origin "$branch"
+          # GITHUB_TOKEN suppresses ordinary push-triggered workflows, but an
+          # explicit workflow_dispatch is allowed and attaches CI to this head.
+          gh workflow run python-ci.yml --ref "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Refresh FAA NASR fallback cycles" \
+            --body "Automated current/preview FAA NASR refresh. The full Python suite passed before this pull request was created." \
+            || gh pr edit "$branch" \
+              --title "Refresh FAA NASR fallback cycles" \
+              --body "Automated current/preview FAA NASR refresh. The full Python suite passed before this pull request was updated."

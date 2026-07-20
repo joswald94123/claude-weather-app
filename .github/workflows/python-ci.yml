@@ -1,0 +1,65 @@
+name: Streamlit Python CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # The release gate compares the complete pushed range, which may span
+          # more than one commit and must not depend on HEAD^ being sufficient.
+          fetch-depth: 0
+
+      - name: Require a new release version for main deployments
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          zero_sha="0000000000000000000000000000000000000000"
+          if [[ "$BEFORE_SHA" == "$zero_sha" ]]; then
+            compare_base="$(git hash-object -t tree /dev/null)"
+          else
+            if ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+            fi
+            compare_base="$BEFORE_SHA"
+          fi
+
+          if git diff --quiet "$compare_base" "$GITHUB_SHA" -- RELEASE_VERSION; then
+            echo "RELEASE_VERSION must be advanced for every main deployment."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements-dev.lock
+
+      - name: Verify Python files compile
+        run: python -m compileall -q -x '(^|/)(\.git|\.venv|prior)(/|$)' .
+
+      - name: Run correctness lint
+        run: python -m ruff check .
+
+      - name: Verify Daher PIM snapshot against source PDF
+        run: python scripts/build_pim_snapshot.py --check
+
+      - name: Run tests
+        run: python -m pytest -q

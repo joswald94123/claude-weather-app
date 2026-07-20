@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["prior"]
+
+[tool.ruff.lint]
+# Start with correctness-oriented rules so CI catches undefined names, broken
+# imports, and invalid syntax without turning this release into a style rewrite.
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# This executable must add the repo root before importing its sibling module.
+"scripts/build_faa_nasr_fallback.py" = ["E402"]

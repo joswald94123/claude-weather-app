@@ -1,0 +1,11 @@
+.DS_Store
+*.pem
+.env*
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv*/
+.streamlit/secrets.toml
+screenshots/
+
+screenshots/.codex_processed_files.json

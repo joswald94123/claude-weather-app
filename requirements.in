@@ -1,0 +1,6 @@
+streamlit>=1.43,<2.0
+pandas>=2.2,<3.0
+requests>=2.32,<3.0
+pytz>=2024.2,<2027.0
+airportsdata>=20250224,<20270000
+pypdf>=5.3,<6.0
