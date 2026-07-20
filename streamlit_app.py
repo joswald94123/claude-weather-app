@@ -1063,7 +1063,8 @@ st.markdown(
         background: rgba(245, 196, 102, 0.17);
     }
 
-    .route-hero.tone-caution {
+    .route-hero.tone-caution,
+    .route-hero.tone-moderate {
         background: linear-gradient(135deg, rgba(183, 121, 31, 0.96), rgba(104, 73, 29, 0.94));
     }
 
@@ -1071,7 +1072,8 @@ st.markdown(
         background: linear-gradient(135deg, rgba(170, 70, 55, 0.97), rgba(92, 36, 38, 0.95));
     }
 
-    .route-pill.tone-caution {
+    .route-pill.tone-caution,
+    .route-pill.tone-moderate {
         background: rgba(255, 222, 156, 0.30);
         border-color: rgba(255, 234, 190, 0.72);
     }
@@ -1291,7 +1293,7 @@ with st.sidebar:
     st.header("Mission Setup")
     st.caption("Route, aircraft, and departure timing for the current brief.")
     if st.button("Refresh Weather", help="Clear the 15-minute NOAA cache and fetch fresh weather on this rerun."):
-        _cached_noaa_weather.clear()
+        _cached_successful_noaa_weather.clear()
     st.button("Reverse", on_click=_reverse_route, width="stretch")
     if st.session_state.pop("reverse_route_notice", False):
         st.caption(
@@ -2915,7 +2917,7 @@ with mission_tab:
     mission_df = df if show_hazard_columns else df[compact_columns]
     hazard_columns = [
         column
-        for column in ("Icing", "Turb", "Convective", "IFR", "Mtn Obsc", "Sfc Wind", "LLWS", "Hazard")
+        for column in ("Icing", "Turbulence", "Convective", "IFR", "Mtn Obsc", "Sfc Wind", "LLWS", "Hazard")
         if column in mission_df.columns
     ]
     styled = mission_df.style.apply(

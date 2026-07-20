@@ -437,6 +437,34 @@ def test_airsigmet_numeric_altitudes_are_raw_feet_not_hundreds():
     assert areas[0].top_ft == 8000
 
 
+def test_airsigmet_surface_base_of_zero_is_preserved():
+    """Verify altitudeLow1=0 (SFC) is kept instead of falling through to altitudeLow2."""
+
+    areas = _parse_hazard_areas(
+        gairmet_rows=[],
+        airsigmet_rows=[
+            {
+                "hazard": "TURB",
+                "altitudeLow1": 0,
+                "altitudeLow2": 24000,
+                "altitudeHi1": 24000,
+                "coords": [
+                    {"lat": 38.0, "lon": -123.0},
+                    {"lat": 39.0, "lon": -123.0},
+                    {"lat": 39.0, "lon": -122.0},
+                ],
+            }
+        ],
+        tcf_payload={},
+        cwa_payload={},
+        pirep_rows=[],
+    )
+
+    assert len(areas) == 1
+    assert areas[0].base_ft == 0
+    assert areas[0].top_ft == 24000
+
+
 def _ete_to_minutes(ete_text: str) -> int:
     """Convert mission ETE display text into minutes for assertions."""
 

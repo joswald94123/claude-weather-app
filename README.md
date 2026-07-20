@@ -1,6 +1,12 @@
-# CODEX Weather Brief
+# Claude Weather App
 
 Streamlit app for TBM 960 mission planning with live NOAA aviation weather, route wind interpolation, and segment-based hazard scoring.
+
+> Parallel implementation forked from CODEX-Weather-Brief at `28b2dc9`
+> (v2026.07.20.13) on 2026-07-20. The upstream project continues independently;
+> this repo evolves per `CLAUDE_ROADMAP.md`. Deployed as **claude-weather-app**
+> on Streamlit Community Cloud. Private repo — the vendored Daher PIM PDF is
+> copyrighted material.
 
 ## What The App Uses As Inputs
 

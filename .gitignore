@@ -9,3 +9,5 @@ __pycache__/
 screenshots/
 
 screenshots/.codex_processed_files.json
+tmp/
+!.env.example

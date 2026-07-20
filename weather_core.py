@@ -2633,16 +2633,17 @@ def _parse_hazard_areas(
         if len(polygon) < 3:
             continue
 
-        low_ft = (
-            _parse_altitude_feet(row.get("altitudeLow1"), assume_hundreds=False)
-            or _parse_altitude_feet(row.get("altitudeLow2"), assume_hundreds=False)
-            or 0
-        )
-        high_ft = (
-            _parse_altitude_feet(row.get("altitudeHi1"), assume_hundreds=False)
-            or _parse_altitude_feet(row.get("altitudeHi2"), assume_hundreds=False)
-            or 60000
-        )
+        # altitudeLow1 of 0 is a valid surface base; fall through only when a field is absent.
+        low_ft = _parse_altitude_feet(row.get("altitudeLow1"), assume_hundreds=False)
+        if low_ft is None:
+            low_ft = _parse_altitude_feet(row.get("altitudeLow2"), assume_hundreds=False)
+        if low_ft is None:
+            low_ft = 0
+        high_ft = _parse_altitude_feet(row.get("altitudeHi1"), assume_hundreds=False)
+        if high_ft is None:
+            high_ft = _parse_altitude_feet(row.get("altitudeHi2"), assume_hundreds=False)
+        if high_ft is None:
+            high_ft = 60000
         if high_ft < low_ft:
             low_ft, high_ft = high_ft, low_ft
 
