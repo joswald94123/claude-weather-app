@@ -70,6 +70,7 @@ from tail_profiles import (  # noqa: E402
     JET_A_POUNDS_PER_GALLON,
     MAX_USABLE_FUEL_GAL,
     TailProfile,
+    calibration_deltas_pct,
     compute_planning_weights,
     deserialize_tail_profile,
     gallons_from_pounds,
@@ -472,7 +473,9 @@ def _sync_cruise_selection(
     is_westbound = is_westbound_route(departure_airport, destination_airport)
     available_flight_levels = cruise_flight_levels_for_direction(is_westbound=is_westbound)
     default_cruise = "FL300" if is_westbound else "FL310"
-    valid_options = {f"FL{fl}" for fl in available_flight_levels}
+    # The placeholder is a deliberate pilot choice (preview mode); only correct
+    # selections that became invalid for the current route direction.
+    valid_options = {f"FL{fl}" for fl in available_flight_levels} | {"Select cruise altitude"}
     if st.session_state.get("cruise_flight_level") not in valid_options:
         st.session_state["cruise_flight_level"] = default_cruise
     return available_flight_levels
@@ -804,20 +807,28 @@ def _cached_noaa_weather(
         etd_time_hhmm,
         app_release,
     )
-    stash = st.session_state.get(_DEGRADED_WEATHER_STASH_KEY)
+    stash: dict = st.session_state.get(_DEGRADED_WEATHER_STASH_KEY) or {}
     now_utc = dt.datetime.now(dt.timezone.utc)
-    if (
-        stash is not None
-        and stash[0] == cache_key
-        and (now_utc - stash[1]).total_seconds() < _DEGRADED_WEATHER_TTL_SECONDS
-    ):
-        return stash[2]
+    stashed = stash.get(cache_key)
+    if stashed is not None and (now_utc - stashed[0]).total_seconds() < _DEGRADED_WEATHER_TTL_SECONDS:
+        return stashed[1]
     try:
         weather_bundle = _cached_successful_noaa_weather(*cache_key)
     except _UncacheableNoaaResult as exc:
-        st.session_state[_DEGRADED_WEATHER_STASH_KEY] = (cache_key, now_utc, exc.weather_bundle)
+        # Keyed per request so two degraded fetches in one rerun (e.g. the windtemp
+        # cycle correction) each get their own short retry window; expired entries
+        # are pruned so the stash cannot grow unbounded.
+        stash = {
+            key: entry
+            for key, entry in stash.items()
+            if (now_utc - entry[0]).total_seconds() < _DEGRADED_WEATHER_TTL_SECONDS
+        }
+        stash[cache_key] = (now_utc, exc.weather_bundle)
+        st.session_state[_DEGRADED_WEATHER_STASH_KEY] = stash
         return exc.weather_bundle
-    st.session_state.pop(_DEGRADED_WEATHER_STASH_KEY, None)
+    if cache_key in stash:
+        stash.pop(cache_key, None)
+        st.session_state[_DEGRADED_WEATHER_STASH_KEY] = stash
     return weather_bundle
 
 
@@ -2132,18 +2143,18 @@ destination_range_fuel_gal = destination_arrival_fuel_gal(
 )
 with st.spinner("Computing destination range rings..."):
     destination_range_rings = _build_waypoint_range_rings(
-    airport=destination_airport,
-    fuel_on_board_gal=destination_range_fuel_gal,
-    performance_profile=active_performance_profile_for_calc,
-    cruise_mode_id=active_cruise_mode_id_for_calc,
-    climb_schedule_id=active_climb_schedule_id_for_calc,
-    descent_profile_id=active_descent_profile_id_for_calc,
-    descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-    cruise_weight_lb=active_cruise_weight_lb_for_calc,
-    climb_weight_lb=active_climb_weight_lb_for_calc,
-    wind_model=route_wind_model,
-    alt_missed_approach_fuel_gal=float(missed_approach_fuel),
-)
+        airport=destination_airport,
+        fuel_on_board_gal=destination_range_fuel_gal,
+        performance_profile=active_performance_profile_for_calc,
+        cruise_mode_id=active_cruise_mode_id_for_calc,
+        climb_schedule_id=active_climb_schedule_id_for_calc,
+        descent_profile_id=active_descent_profile_id_for_calc,
+        descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
+        cruise_weight_lb=active_cruise_weight_lb_for_calc,
+        climb_weight_lb=active_climb_weight_lb_for_calc,
+        wind_model=route_wind_model,
+        alt_missed_approach_fuel_gal=float(missed_approach_fuel),
+    )
 range_insets.append(
     UiRangeInset(
         role="Destination",
@@ -2320,6 +2331,7 @@ with mission_tab:
         alternate_and_reserve_gal=focus_calculated_required_fuel,
         landing_minimum_gal=int(math.ceil(float(landing_minimum))),
         pilot_floor_gal=focus_reserve_floor,
+        reserve_margin_gal=focus_reserve_margin,
         taxi_fuel_gal=focus_fuel_ledger.taxi_fuel_gal if focus_fuel_ledger else None,
         climb_fuel_gal=focus_fuel_ledger.climb_fuel_gal if focus_fuel_ledger else None,
         cruise_fuel_gal=focus_fuel_ledger.cruise_fuel_gal if focus_fuel_ledger else None,
@@ -2351,7 +2363,7 @@ with mission_tab:
             "FOB at landing",
             f"{mission_headline.fob_at_landing_gal} gal",
             (
-                "After planned fuel stops | worst leg margin "
+                "Gross touchdown FOB after planned fuel stops | worst leg margin "
                 f"{mission_headline.reserve_margin_gal:+d} gal ({mission_headline.margin_leg_label})"
                 if mission_headline.basis == "multi-leg"
                 else landing_fuel_summary.card_detail
@@ -2383,7 +2395,8 @@ with mission_tab:
         st.caption(landing_fuel_summary.breakdown)
     if use_tail_loading and focus_point is not None:
         with st.expander("Actual vs. Modeled Calibration", expanded=False):
-            modeled_minutes = int(parse_airborne_ete(focus_ete_text).total_seconds() // 60)
+            # Same ceil convention the core uses for the displayed ETE.
+            modeled_minutes = int(math.ceil((float(focus_point.airborne_hours) * 60.0) - 1e-9))
             calibration_cols = st.columns(2)
             with calibration_cols[0]:
                 actual_minutes = st.number_input(
@@ -2399,8 +2412,12 @@ with mission_tab:
                     value=max(focus_fuel_burn, 1),
                     key="tail_actual_fuel_burn_gal",
                 )
-            time_delta_pct = ((float(actual_minutes) / max(modeled_minutes, 1)) - 1.0) * 100.0
-            fuel_delta_pct = ((float(actual_fuel_burn) / max(focus_fuel_burn, 1)) - 1.0) * 100.0
+            time_delta_pct, fuel_delta_pct = calibration_deltas_pct(
+                actual_airborne_minutes=float(actual_minutes),
+                modeled_airborne_minutes=float(modeled_minutes),
+                actual_fuel_burn_gal=float(actual_fuel_burn),
+                modeled_fuel_burn_gal=float(focus_fuel_burn),
+            )
             st.caption(
                 f"Observed delta vs book model: time {time_delta_pct:+.1f}%; fuel {fuel_delta_pct:+.1f}%. "
                 "Save these to the tail profile after confirming the actual flight values."
@@ -2721,26 +2738,26 @@ with hazard_tab:
             vertical_profile = build_route_vertical_profile(
                 departure_airport,
                 destination_airport,
-        hazard_areas=weather.hazard_areas,
-        reference_time_utc=selected_etd.astimezone(dt.timezone.utc),
-        flight_level=selected_hazard_fl,
-        climb_rate_fpm=int(climb_rate_fpm),
-        descent_rate_fpm=int(descent_rate_fpm),
-        cruise_tas_kts=int(cruise_tas_kts),
-        climb_ias_kts=int(climb_ias_kts),
-        descent_ias_kts=int(descent_ias_kts),
-        performance_profile=active_performance_profile_for_calc,
-        cruise_mode_id=active_cruise_mode_id_for_calc,
-        climb_schedule_id=active_climb_schedule_id_for_calc,
-        upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
-        climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
-        descent_profile_id=active_descent_profile_id_for_calc,
-        descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-        cruise_weight_lb=active_cruise_weight_lb_for_calc,
-        climb_weight_lb=active_climb_weight_lb_for_calc,
-        wind_model=route_wind_model,
-            route_plan=route_plan,
-        )
+                hazard_areas=weather.hazard_areas,
+                reference_time_utc=selected_etd.astimezone(dt.timezone.utc),
+                flight_level=selected_hazard_fl,
+                climb_rate_fpm=int(climb_rate_fpm),
+                descent_rate_fpm=int(descent_rate_fpm),
+                cruise_tas_kts=int(cruise_tas_kts),
+                climb_ias_kts=int(climb_ias_kts),
+                descent_ias_kts=int(descent_ias_kts),
+                performance_profile=active_performance_profile_for_calc,
+                cruise_mode_id=active_cruise_mode_id_for_calc,
+                climb_schedule_id=active_climb_schedule_id_for_calc,
+                upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
+                climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
+                descent_profile_id=active_descent_profile_id_for_calc,
+                descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
+                cruise_weight_lb=active_cruise_weight_lb_for_calc,
+                climb_weight_lb=active_climb_weight_lb_for_calc,
+                wind_model=route_wind_model,
+                route_plan=route_plan,
+            )
         vertical_profile_svg = build_route_vertical_profile_svg(
             vertical_profile,
             departure_label=departure_airport.icao,

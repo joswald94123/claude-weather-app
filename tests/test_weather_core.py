@@ -2937,3 +2937,112 @@ def test_mission_brief_document_assembles_two_stop_missions():
     assert document.mission_headline.fob_at_landing_gal == round(
         document.multi_leg_plan.leg_arrival_fuels_gal[-1]
     )
+
+
+def test_route_hazard_table_labels_beyond_horizon_gairmet():
+    """Verify the segment table itself carries the beyond-horizon source label."""
+
+    dep = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    arr = AirportData("KPSP", 33.8297, -116.5070, "US/Pacific", "test", elevation_ft=477.0)
+    reference_time = dt.datetime(2026, 3, 7, 18, 45, tzinfo=dt.timezone.utc)
+    area = HazardArea(
+        hazard_type="turbulence",
+        severity_score=2,
+        base_ft=24000,
+        top_ft=36000,
+        polygons=[[(32.0, -124.5), (40.5, -124.5), (40.5, -115.0), (32.0, -115.0)]],
+        source="G-AIRMET TANGO 5",
+        valid_from_utc=reference_time - dt.timedelta(hours=5),
+        valid_to_utc=reference_time - dt.timedelta(hours=2),
+    )
+
+    rows = evaluate_route_hazards(
+        dep,
+        arr,
+        hazard_areas=[area],
+        reference_time_utc=reference_time,
+        flight_levels=[310],
+    )[310]
+
+    assert any(
+        "(latest snapshot beyond forecast horizon)" in row.sources for row in rows
+    )
+
+
+def test_direction_label_reflects_computed_headwind_eastbound():
+    """Verify easterly winds aloft label an eastbound mission as a headwind mission."""
+
+    easterly_model = weather_core.RouteWindModel(
+        segment_tailwind_by_fl={},
+        climb_tailwind_by_fl={},
+        descent_tailwind_by_fl={},
+        station_profiles=((36.1, -117.4, {30000: (-50.0, 0.0)}),),
+    )
+    brief = build_mission_brief(
+        AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0),
+        AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0),
+        departure_date=dt.date(2026, 3, 5),
+        departure_time_local=dt.time(10, 0),
+        derive_direction=True,
+        start_fuel_gal=292,
+        wind_model=easterly_model,
+        flight_levels=[300],
+    )
+
+    assert brief.direction_label == "Eastbound (Headwind)"
+
+
+def test_multi_leg_engine_uses_per_leg_wind_geography():
+    """Verify a station covering only the second leg cannot move the first leg's winds."""
+
+    import dataclasses
+
+    base_weather = fetch_noaa_weather(["KSTS"], session=_BrokenSession())  # type: ignore[arg-type]
+    weather = dataclasses.replace(
+        base_weather,
+        windtemps=[
+            WindTempPoint(
+                station="PHX",
+                altitude_ft=30000,
+                direction_deg=270,
+                speed_kt=60,
+                temperature_c=None,
+                raw_code="2760",
+            )
+        ],
+    )
+    departure = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    destination = AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0)
+    stop = RouteWaypoint(
+        identifier="KBFL",
+        latitude=35.4336,
+        longitude=-119.0568,
+        waypoint_type="Airport",
+        source="test",
+        is_fuel_stop=True,
+    )
+    segments = split_route_plan_at_fuel_stops(build_route_plan(departure, destination, [stop]))
+
+    plan = weather_core.build_multi_leg_plan(
+        fuel_stop_segments=segments,
+        departure_dt=dt.datetime(2026, 7, 21, 10, 0, tzinfo=dt.timezone.utc),
+        start_fuel_gal=292.0,
+        ground_minutes=30.0,
+        uplifts={},
+        alternates={},
+        mission_alternate_code=None,
+        mission_alternate_distance_nm=0.0,
+        mission_alternate_route_label="",
+        approach_confirmed_icaos=set(),
+        destination_has_approach=True,
+        departure_fallback_timezone="US/Pacific",
+        destination_fallback_timezone="US/Arizona",
+        weather=weather,
+        usable_fuel_capacity_gal=292.0,
+        focus_flight_level=300,
+        mission_brief_kwargs={},
+    )
+
+    first, second = plan.legs
+    assert first.point.wind_knots == "0k"
+    assert second.point.wind_knots != "0k"

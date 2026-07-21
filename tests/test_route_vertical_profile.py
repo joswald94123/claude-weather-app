@@ -333,3 +333,52 @@ def test_interactive_profile_legend_toggles_locally_without_streamlit_rerun():
     assert "layer.style.display=visible?'':'none'" in component_html
     assert "classList.toggle('is-hidden',!visible)" in component_html
     assert "streamlit" not in component_html.lower()
+
+
+def _volcanic_ash_profile():
+    """Build a profile containing a hazard type outside the known styling set."""
+
+    departure = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    destination = AirportData("KPSP", 33.8297, -116.5070, "US/Pacific", "test", elevation_ft=477.0)
+    novel_area = HazardArea(
+        hazard_type="volcanic_ash",
+        severity_score=3,
+        base_ft=20000,
+        top_ft=40000,
+        polygons=[[(32.0, -124.5), (40.5, -124.5), (40.5, -115.0), (32.0, -115.0)]],
+        source="Test novel hazard",
+    )
+    return build_route_vertical_profile(
+        departure,
+        destination,
+        hazard_areas=[novel_area],
+        reference_time_utc=dt.datetime(2026, 3, 7, 18, 45, tzinfo=dt.timezone.utc),
+        flight_level=310,
+    )
+
+
+def test_unknown_hazard_type_renders_with_generic_styling():
+    """A novel hazard_type from a feed change must not silently disappear."""
+
+    svg = build_route_vertical_profile_svg(
+        _volcanic_ash_profile(),
+        departure_label="KSTS",
+        destination_label="KPSP",
+        selected_flight_level_label="FL310",
+    )
+
+    assert 'data-hazard-type="volcanic_ash"' in svg
+
+
+def test_explicit_empty_visible_set_hides_all_hazards():
+    """An explicitly empty selection means hide-all, not the falsy show-all trap."""
+
+    svg = build_route_vertical_profile_svg(
+        _volcanic_ash_profile(),
+        departure_label="KSTS",
+        destination_label="KPSP",
+        selected_flight_level_label="FL310",
+        visible_hazard_types=set(),
+    )
+
+    assert "data-hazard-type=" not in svg

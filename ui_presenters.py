@@ -54,14 +54,19 @@ def landing_fuel_presentation(
     alternate_and_reserve_gal: int,
     landing_minimum_gal: int,
     pilot_floor_gal: int,
+    reserve_margin_gal: int,
     taxi_fuel_gal: float | None = None,
     climb_fuel_gal: float | None = None,
     cruise_fuel_gal: float | None = None,
     descent_fuel_gal: float | None = None,
 ) -> LandingFuelPresentation:
-    """Keep the summary card compact while retaining every fuel-requirement input."""
+    """Keep the summary card compact while retaining every fuel-requirement input.
 
-    margin_gal = fuel_on_board_gal - effective_requirement_gal
+    The margin is rendered, never re-derived: this module must contain no fuel
+    arithmetic, so the caller passes the ledger's reserve_margin_gal.
+    """
+
+    margin_gal = reserve_margin_gal
     if margin_gal > 0:
         comparison = f"{margin_gal} gal above {effective_requirement_gal} gal required"
     elif margin_gal < 0:

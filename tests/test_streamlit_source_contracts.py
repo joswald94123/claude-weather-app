@@ -27,3 +27,12 @@ def test_hazard_styler_columns_match_the_matrix_row_keys():
     assert styled_columns
     for column in styled_columns:
         assert f'"{column}":' in APP_SOURCE, f"styled column {column!r} is not a matrix row key"
+
+
+def test_weather_cache_contracts_hold():
+    """Pin the refresh target, release-keyed cache signatures, and degraded-stash TTL."""
+
+    assert "_cached_successful_noaa_weather.clear()" in APP_SOURCE
+    assert APP_SOURCE.count("app_release: str") >= 2
+    assert "_DEGRADED_WEATHER_TTL_SECONDS = 120" in APP_SOURCE
+    assert "_DEGRADED_WEATHER_STASH_KEY" in APP_SOURCE

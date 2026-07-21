@@ -61,6 +61,7 @@ def test_landing_fuel_card_stays_compact_and_breakdown_remains_auditable():
         alternate_and_reserve_gal=40,
         landing_minimum_gal=60,
         pilot_floor_gal=0,
+        reserve_margin_gal=-31,
     )
 
     assert presentation.card_detail == "Gross touchdown FOB | 31 gal below 60 gal required"
@@ -79,6 +80,7 @@ def test_landing_fuel_card_reports_positive_and_exact_margins():
         alternate_and_reserve_gal=60,
         landing_minimum_gal=40,
         pilot_floor_gal=0,
+        reserve_margin_gal=15,
     )
     exact = landing_fuel_presentation(
         fuel_on_board_gal=60,
@@ -87,6 +89,7 @@ def test_landing_fuel_card_reports_positive_and_exact_margins():
         alternate_and_reserve_gal=40,
         landing_minimum_gal=60,
         pilot_floor_gal=0,
+        reserve_margin_gal=0,
     )
 
     assert above.card_detail.endswith("15 gal above 60 gal required")
@@ -103,6 +106,7 @@ def test_landing_fuel_breakdown_includes_ledger_phase_composition():
         alternate_and_reserve_gal=40,
         landing_minimum_gal=60,
         pilot_floor_gal=0,
+        reserve_margin_gal=-31,
         taxi_fuel_gal=8.0,
         climb_fuel_gal=22.2,
         cruise_fuel_gal=210.5,

@@ -1683,7 +1683,7 @@ def _hazard_band_from_gairmet(record: dict[str, object]) -> tuple[int, int]:
     if base_ft is None:
         base_ft = 0
     if top_ft is None:
-        top_ft = 60000
+        top_ft = DEFAULT_HAZARD_TOP_FT
 
     if top_ft < base_ft:
         base_ft, top_ft = top_ft, base_ft
@@ -2710,7 +2710,7 @@ def _parse_hazard_areas(
             continue
 
         base_ft, top_ft = _hazard_band_from_gairmet(row)
-        if hazard_type in surface_hazard_bands and (base_ft, top_ft) == (0, 60000):
+        if hazard_type in surface_hazard_bands and (base_ft, top_ft) == (0, DEFAULT_HAZARD_TOP_FT):
             base_ft, top_ft = surface_hazard_bands[hazard_type]
         issue_time = _parse_epoch_utc(row.get("issueTime")) or _parse_iso_utc(row.get("issueTime"))
         snapshot_time = _parse_epoch_utc(row.get("validTime")) or _parse_iso_utc(row.get("validTime"))
@@ -2777,7 +2777,7 @@ def _parse_hazard_areas(
         if high_ft is None:
             high_ft = _parse_altitude_feet(row.get("altitudeHi2"), assume_hundreds=False)
         if high_ft is None:
-            high_ft = 60000
+            high_ft = DEFAULT_HAZARD_TOP_FT
         if high_ft < low_ft:
             low_ft, high_ft = high_ft, low_ft
 
@@ -2808,7 +2808,7 @@ def _parse_hazard_areas(
             if not polygons:
                 continue
 
-            tops_ft = _parse_altitude_feet(properties.get("tops")) or 60000
+            tops_ft = _parse_altitude_feet(properties.get("tops")) or DEFAULT_HAZARD_TOP_FT
             valid_time = _parse_tcf_valid_time_utc(properties.get("validTime"))
             areas.append(
                 HazardArea(
@@ -2951,7 +2951,7 @@ def _parse_hazard_areas(
             if base_ft is None:
                 base_ft = max(report_altitude_ft - PIREP_ALTITUDE_HALF_BAND_FT, 0)
             if top_ft is None:
-                top_ft = report_altitude_ft + PIREP_ALTITUDE_HALF_BAND_FT if report_altitude_ft else 60000
+                top_ft = report_altitude_ft + PIREP_ALTITUDE_HALF_BAND_FT if report_altitude_ft else DEFAULT_HAZARD_TOP_FT
             areas.append(
                 HazardArea(
                     hazard_type=hazard_type,

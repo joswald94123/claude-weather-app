@@ -17,6 +17,20 @@ def gallons_from_pounds(pounds: float) -> float:
     return float(pounds) / JET_A_POUNDS_PER_GALLON
 
 
+def calibration_deltas_pct(
+    *,
+    actual_airborne_minutes: float,
+    modeled_airborne_minutes: float,
+    actual_fuel_burn_gal: float,
+    modeled_fuel_burn_gal: float,
+) -> tuple[float, float]:
+    """Return (time, fuel) percentage deltas of actuals versus the book model."""
+
+    time_delta_pct = ((float(actual_airborne_minutes) / max(float(modeled_airborne_minutes), 1.0)) - 1.0) * 100.0
+    fuel_delta_pct = ((float(actual_fuel_burn_gal) / max(float(modeled_fuel_burn_gal), 1.0)) - 1.0) * 100.0
+    return time_delta_pct, fuel_delta_pct
+
+
 @dataclass(frozen=True)
 class TailProfile:
     """Pilot-entered loading and observed-performance settings for one aircraft."""
