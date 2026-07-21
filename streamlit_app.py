@@ -192,8 +192,13 @@ class UiRangeInset:
 def _cached_faa_waypoint(
     identifier: str,
     reference_date_iso: str,
+    app_release: str = "",
 ) -> tuple[FaaWaypoint | None, str]:
-    """Resolve an FAA waypoint once per identifier and chart cycle for UI reuse."""
+    """Resolve an FAA waypoint once per identifier, chart cycle, and app release.
+
+    The release is part of the cache key so pickled results from a previous
+    deploy cannot be unpickled against newer dataclass definitions.
+    """
 
     reference_date = dt.date.fromisoformat(reference_date_iso)
     try:
@@ -298,7 +303,7 @@ def _validate_airport_input(code: str, reference_date_iso: str) -> UiAirportVali
     faa_waypoint: FaaWaypoint | None = None
     cycle_label: str | None = None
     lookup_error: str | None = None
-    faa_waypoint, cycle_label = _cached_faa_waypoint(code, reference_date_iso)
+    faa_waypoint, cycle_label = _cached_faa_waypoint(code, reference_date_iso, _APP_RELEASE)
     if cycle_label.startswith("ERROR:"):
         lookup_error = cycle_label.removeprefix("ERROR:")
         cycle_label = None
@@ -390,7 +395,7 @@ def _resolve_route_plan_for_ui(
     cycle_label: str | None = None
 
     for token in route_tokens:
-        faa_waypoint, token_cycle_label = _cached_faa_waypoint(token, reference_date_iso)
+        faa_waypoint, token_cycle_label = _cached_faa_waypoint(token, reference_date_iso, _APP_RELEASE)
         if token_cycle_label.startswith("ERROR:"):
             return UiRouteResolution(
                 route_plan=direct_route_plan,
@@ -931,11 +936,17 @@ def _evaluate_route_hazards_compatible(
 
 
 class _UncacheableNoaaResult(RuntimeError):
-    """Carry a failed NOAA bundle out of Streamlit caching without losing diagnostics."""
+    """Carry a degraded NOAA bundle out of Streamlit caching without losing diagnostics."""
 
     def __init__(self, weather_bundle):
         super().__init__("Critical NOAA feeds failed; result intentionally not cached.")
         self.weather_bundle = weather_bundle
+
+
+# Degraded bundles are retried quickly instead of being served for the full 15 minutes,
+# while a per-session stash prevents a refetch storm on every widget interaction.
+_DEGRADED_WEATHER_TTL_SECONDS = 120.0
+_DEGRADED_WEATHER_STASH_KEY = "_degraded_weather_stash"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -949,10 +960,12 @@ def _cached_successful_noaa_weather(
     windtemp_fcst: str,
     etd_date_iso: str,
     etd_time_hhmm: str,
+    app_release: str = "",
 ):
-    """Cache NOAA weather for the selected airports, wind region, and ETD key."""
+    """Cache NOAA weather for the selected airports, wind region, ETD, and release."""
 
-    # ETD values are part of the cache key to force refresh when date/time changes.
+    # ETD values are part of the cache key to force refresh when date/time changes;
+    # the release keeps pre-deploy pickles from surviving into a new build.
     airport_codes = [dep_icao, arr_icao]
     if alternate_icao:
         airport_codes.append(alternate_icao)
@@ -964,8 +977,9 @@ def _cached_successful_noaa_weather(
         windtemp_fcst=windtemp_fcst,
     )
     critical_statuses = [weather_bundle.feed_statuses.get(name) for name in ("metar", "taf", "windtemp")]
-    if critical_statuses and all(status is not None and status.status == "failed" for status in critical_statuses):
-        # Streamlit does not cache exceptions, so the next rerun can retry immediately.
+    if any(status is not None and status.status == "failed" for status in critical_statuses):
+        # Streamlit does not cache exceptions, so a degraded bundle is not pinned
+        # for the full TTL; the wrapper stashes it briefly per session instead.
         raise _UncacheableNoaaResult(weather_bundle)
     return weather_bundle
 
@@ -980,23 +994,37 @@ def _cached_noaa_weather(
     windtemp_fcst: str,
     etd_date_iso: str,
     etd_time_hhmm: str,
+    app_release: str = "",
 ):
-    """Cache usable NOAA bundles while returning failed bundles uncached for visible diagnostics."""
+    """Cache healthy NOAA bundles long-term and degraded bundles for two minutes."""
 
+    cache_key = (
+        dep_icao,
+        arr_icao,
+        alternate_icao,
+        additional_airports_csv,
+        windtemp_region,
+        windtemp_level,
+        windtemp_fcst,
+        etd_date_iso,
+        etd_time_hhmm,
+        app_release,
+    )
+    stash = st.session_state.get(_DEGRADED_WEATHER_STASH_KEY)
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    if (
+        stash is not None
+        and stash[0] == cache_key
+        and (now_utc - stash[1]).total_seconds() < _DEGRADED_WEATHER_TTL_SECONDS
+    ):
+        return stash[2]
     try:
-        return _cached_successful_noaa_weather(
-            dep_icao,
-            arr_icao,
-            alternate_icao,
-            additional_airports_csv,
-            windtemp_region,
-            windtemp_level,
-            windtemp_fcst,
-            etd_date_iso,
-            etd_time_hhmm,
-        )
+        weather_bundle = _cached_successful_noaa_weather(*cache_key)
     except _UncacheableNoaaResult as exc:
+        st.session_state[_DEGRADED_WEATHER_STASH_KEY] = (cache_key, now_utc, exc.weather_bundle)
         return exc.weather_bundle
+    st.session_state.pop(_DEGRADED_WEATHER_STASH_KEY, None)
+    return weather_bundle
 
 
 # Keep the visual shell near the top so layout and styling stay easy to tune together.
@@ -1296,6 +1324,7 @@ with st.sidebar:
     st.caption("Route, aircraft, and departure timing for the current brief.")
     if st.button("Refresh Weather", help="Clear the 15-minute NOAA cache and fetch fresh weather on this rerun."):
         _cached_successful_noaa_weather.clear()
+        st.session_state.pop(_DEGRADED_WEATHER_STASH_KEY, None)
     st.button("Reverse", on_click=_reverse_route, width="stretch")
     if st.session_state.pop("reverse_route_notice", False):
         st.caption(
@@ -2070,6 +2099,7 @@ with st.spinner("Recalculating..."):
         windtemp_fcst,
         departure_date.isoformat(),
         departure_time.strftime("%H:%M"),
+        _APP_RELEASE,
     )
     initial_windtemp_status = weather.feed_statuses.get("windtemp")
     if initial_windtemp_status is not None and initial_windtemp_status.issue_time_utc is not None:
@@ -2089,6 +2119,7 @@ with st.spinner("Recalculating..."):
                 windtemp_fcst,
                 departure_date.isoformat(),
                 departure_time.strftime("%H:%M"),
+                _APP_RELEASE,
             )
     route_wind_model = build_route_wind_model(
         departure_airport,
