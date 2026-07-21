@@ -1,0 +1,173 @@
+[
+ {
+  "bulletinTime": "2026-07-20T23:20:00.000Z",
+  "dbPopTime": "2026-07-20T23:20:12.155Z",
+  "elev": 35,
+  "fcsts": [
+   {
+    "altim": null,
+    "clouds": [
+     {
+      "base": 18000,
+      "cover": "BKN",
+      "type": null
+     }
+    ],
+    "fcstChange": null,
+    "icgTurb": [],
+    "notDecoded": null,
+    "probability": null,
+    "temp": [],
+    "timeBec": null,
+    "timeFrom": 1784592000,
+    "timeTo": 1784613600,
+    "vertVis": null,
+    "visib": "6+",
+    "wdir": 190,
+    "wgst": null,
+    "wshearDir": null,
+    "wshearHgt": null,
+    "wshearSpd": null,
+    "wspd": 7,
+    "wxString": null
+   },
+   {
+    "altim": null,
+    "clouds": [
+     {
+      "base": 700,
+      "cover": "BKN",
+      "type": null
+     }
+    ],
+    "fcstChange": "FM",
+    "icgTurb": [],
+    "notDecoded": null,
+    "probability": null,
+    "temp": [],
+    "timeBec": null,
+    "timeFrom": 1784613600,
+    "timeTo": 1784649600,
+    "vertVis": null,
+    "visib": "6+",
+    "wdir": "VRB",
+    "wgst": null,
+    "wshearDir": null,
+    "wshearHgt": null,
+    "wshearSpd": null,
+    "wspd": 3,
+    "wxString": null
+   },
+   {
+    "altim": null,
+    "clouds": [
+     {
+      "base": 700,
+      "cover": "SCT",
+      "type": null
+     }
+    ],
+    "fcstChange": "FM",
+    "icgTurb": [],
+    "notDecoded": null,
+    "probability": null,
+    "temp": [],
+    "timeBec": null,
+    "timeFrom": 1784649600,
+    "timeTo": 1784678400,
+    "vertVis": null,
+    "visib": "6+",
+    "wdir": "VRB",
+    "wgst": null,
+    "wshearDir": null,
+    "wshearHgt": null,
+    "wshearSpd": null,
+    "wspd": 3,
+    "wxString": null
+   }
+  ],
+  "icaoId": "KSTS",
+  "issueTime": "2026-07-20T23:20:00.000Z",
+  "lat": 38.5037,
+  "lon": -122.811,
+  "mostRecent": 1,
+  "name": "Santa Rosa/Schulz Arpt",
+  "prior": 4,
+  "rawTAF": "TAF KSTS 202320Z 2100/2124 19007KT P6SM BKN180 FM210600 VRB03KT P6SM BKN007 FM211600 VRB03KT P6SM SCT007",
+  "remarks": "",
+  "validTimeFrom": 1784592000,
+  "validTimeTo": 1784678400
+ },
+ {
+  "bulletinTime": "2026-07-20T23:20:00.000Z",
+  "dbPopTime": "2026-07-20T23:20:20.638Z",
+  "elev": 146,
+  "fcsts": [
+   {
+    "altim": null,
+    "clouds": [
+     {
+      "base": null,
+      "cover": "SKC",
+      "type": null
+     }
+    ],
+    "fcstChange": null,
+    "icgTurb": [],
+    "notDecoded": null,
+    "probability": null,
+    "temp": [],
+    "timeBec": null,
+    "timeFrom": 1784592000,
+    "timeTo": 1784660400,
+    "vertVis": null,
+    "visib": "6+",
+    "wdir": 320,
+    "wgst": null,
+    "wshearDir": null,
+    "wshearHgt": null,
+    "wshearSpd": null,
+    "wspd": 8,
+    "wxString": null
+   },
+   {
+    "altim": null,
+    "clouds": [
+     {
+      "base": 25000,
+      "cover": "FEW",
+      "type": null
+     }
+    ],
+    "fcstChange": "FM",
+    "icgTurb": [],
+    "notDecoded": null,
+    "probability": null,
+    "temp": [],
+    "timeBec": null,
+    "timeFrom": 1784660400,
+    "timeTo": 1784678400,
+    "vertVis": null,
+    "visib": "6+",
+    "wdir": 310,
+    "wgst": null,
+    "wshearDir": null,
+    "wshearHgt": null,
+    "wshearSpd": null,
+    "wspd": 11,
+    "wxString": null
+   }
+  ],
+  "icaoId": "KBFL",
+  "issueTime": "2026-07-20T23:20:00.000Z",
+  "lat": 35.43424,
+  "lon": -119.05523,
+  "mostRecent": 1,
+  "name": "Bakersfield/Meadows Arpt",
+  "prior": 2,
+  "rawTAF": "TAF KBFL 202320Z 2100/2124 32008KT P6SM SKC FM211900 31011KT P6SM FEW250",
+  "remarks": "",
+  "validTimeFrom": 1784592000,
+  "validTimeTo": 1784678400
+ }
+]
