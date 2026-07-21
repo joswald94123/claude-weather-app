@@ -11,18 +11,19 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
 - FIX-02 item 1: AIRSIGMET surface-base (`altitudeLow1=0`) falsy-zero fix + regression test.
 - FIX-05 items 1–2: `tone-moderate` hero/pill CSS coverage; Turbulence column coloring.
 
-## Phase 1 — remaining P1 correctness (FIX chunks)
-1. FIX-06 item 1: descent wind/temperature geographic mirroring (both integrators) + gradient regression test.
-2. FIX-04: multi-leg hero/FOB/mission-risk truthfulness (worst per-leg basis; nonstop-matrix caption).
-3. FIX-01 items 2–3: partial-failure cache TTL; release-keyed cache keys.
-4. FIX-02 remainder: CWA band swap / UCWA-in-cwaText / qualifier severity; VV-cover units; vertVis in forecast-quality; window constants.
-5. FIX-03: shared G-AIRMET horizon fallback for table + vertical profile.
+## Phase 1 — remaining P1 correctness (COMPLETE 2026-07-20, v2026.07.20.21)
+1. DONE (v.17) FIX-06 item 1: descent wind mirroring fixed in the route integrator + failing-first gradient regression test.
+2. DONE (v.18) FIX-04: multi-leg hero/FOB/mission-risk truthfulness via resolve_mission_headline + risk override.
+3. DONE (v.19) FIX-01 items 2–3: degraded-bundle 2-minute session stash; release-keyed cache keys.
+4. DONE (v.20) FIX-02 remainder: CWA band swap / UCWA-in-cwaText / SEV qualifier; VV-cover units; vertVis in forecast-quality; window constants.
+5. DONE (v.21) FIX-03: shared hazard_applies_at() horizon fallback for table + profile, capped at 6 h.
 
 ## Phase 2 — policy, validation, hardening
-- FIX-07: reserve-policy label (DECIDED: 60-gal floor protects the intended
-  destination touchdown, diversion excluded — formula unchanged); 292-gal
-  usable-capacity validation; wind-sign direction label; chained-leg
-  uncovered-bin geography.
+- DONE (v.22) FIX-07: reserve-basis caption + decision comment at the formula
+  (floor protects intended destination touchdown, diversion excluded);
+  292-gal usable-capacity cap on fuel load and uplifts with a visible trim
+  warning; hero wind parenthetical derived from computed winds; per-leg wind
+  models for chained legs; falsy-track cleanup.
 - FIX-08: RELEASE_VERSION guarded read; FAA failure-path tests; clean 3.13 lock
   regen; unknown-hazard-type rendering; workflow timeouts.
 - FIX-05 remainder: spinner scope; widget/session-state patterns; risk-reason

@@ -70,6 +70,7 @@ def landing_fuel_presentation(
         breakdown=(
             f"Fuel basis — {fuel_status}: gross FOB at touchdown is {fuel_on_board_gal} gal before "
             f"alternate or reserve use. Effective requirement {effective_requirement_gal} gal = max(alt + reserve "
-            f"{alternate_and_reserve_gal}, landing minimum {landing_minimum_gal}, pilot floor {pilot_floor_gal})."
+            f"{alternate_and_reserve_gal}, landing minimum {landing_minimum_gal}, pilot floor {pilot_floor_gal}). "
+            "Landing minimum protects arrival at the destination; a diversion draws it down en route to the alternate."
         ),
     )

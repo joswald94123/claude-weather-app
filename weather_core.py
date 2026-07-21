@@ -4918,7 +4918,7 @@ def _flight_level_profile(
             distance_from_departure_nm=mission_distance_nm / 2.0 if mission_distance_nm > 0.0 else 0.0,
             route_plan=route_plan,
         )
-    if wind_model is not None and wind_model.track_deg:
+    if wind_model is not None and wind_model.track_deg is not None:
         track_deg = wind_model.track_deg
 
     if (
@@ -5323,6 +5323,10 @@ def _flight_level_point(
         if reserve_floor_gal is not None
         else 0
     )
+    # Decision (Jack, 2026-07-20, FIX-07): the landing minimum is a floor protecting
+    # arrival at the INTENDED destination; a diversion draws it down en route to the
+    # alternate. The alternative reading (alt_fuel + max(reserve, landing_min), i.e. a
+    # floor at final touchdown including a diversion) was considered and rejected.
     required_landing_fuel_gal = max(
         calculated_required_landing_fuel_gal,
         bounded_landing_minimum_gal,
@@ -5418,6 +5422,7 @@ def build_mission_brief(
     mission_segment_count = max(SEGMENTS, int(math.ceil(distance_nm / CRUISE_BIN_DISTANCE_NM)))
 
     points: list[MissionPoint] = []
+    numeric_average_winds_kts: list[float] = []
     baseline_wind_knots = 0
     active_flight_levels = list(flight_levels or FLIGHT_LEVELS)
     baseline_level = 280 if 280 in active_flight_levels else active_flight_levels[len(active_flight_levels) // 2]
@@ -5460,10 +5465,23 @@ def build_mission_brief(
             segment_count=mission_segment_count,
         )
         points.append(point)
+        numeric_average_winds_kts.append(float(avg_wind))
         if fl == baseline_level:
             baseline_wind_knots = avg_wind
 
-    wind_type = "Headwind" if is_return_leg else "Tailwind"
+    # The parenthetical must reflect the computed winds, not the route direction:
+    # easterly winds aloft make an eastbound leg a headwind mission.
+    average_mission_wind_kts = (
+        sum(numeric_average_winds_kts) / len(numeric_average_winds_kts)
+        if numeric_average_winds_kts
+        else 0.0
+    )
+    if average_mission_wind_kts > 0:
+        wind_type = "Tailwind"
+    elif average_mission_wind_kts < 0:
+        wind_type = "Headwind"
+    else:
+        wind_type = "Calm"
     direction = "Westbound" if is_return_leg else "Eastbound"
 
     return MissionBrief(

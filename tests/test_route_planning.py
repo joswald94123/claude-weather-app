@@ -248,3 +248,20 @@ def test_mission_headline_passes_through_nonstop_missions():
     assert headline.reserve_margin_gal == 23
     assert headline.margin_leg_label is None
     assert headline.fob_at_landing_gal == 95
+
+
+def test_fuel_stop_uplift_is_trimmed_to_usable_capacity():
+    """Verify landing fuel plus uplift cannot exceed the tank and the trim is reported."""
+
+    policy = resolve_fuel_stop_leg_policy(
+        destination_identifier="KBFL",
+        is_final_leg=False,
+        landing_fuel_gal=70.0,
+        default_start_fuel_gal=292.0,
+        uplifts={"KBFL": 250.0},
+        alternates={},
+        usable_fuel_capacity_gal=292.0,
+    )
+
+    assert policy.next_start_fuel_gal == 292.0
+    assert policy.uplift_trimmed_gal == pytest.approx(28.0)

@@ -61,6 +61,7 @@ import route_planning as _route_planning  # noqa: E402
 import route_vertical_profile as _route_vertical_profile  # noqa: E402
 from tail_profiles import (  # noqa: E402
     JET_A_POUNDS_PER_GALLON,
+    MAX_USABLE_FUEL_GAL,
     TailProfile,
     compute_planning_weights,
     deserialize_tail_profile,
@@ -1631,7 +1632,14 @@ with st.sidebar:
         )
     )
     selected_descent_rows = active_descent_profile.descent_rows_by_rate_fpm[selected_descent_rate_fpm]
-    start_fuel = st.number_input("Fuel Load (gal)", min_value=0, value=292, key="mission_start_fuel_gal")
+    start_fuel = st.number_input(
+        "Fuel Load (gal)",
+        min_value=0,
+        max_value=int(MAX_USABLE_FUEL_GAL),
+        value=292,
+        key="mission_start_fuel_gal",
+        help=f"TBM 960 usable fuel capacity is {int(MAX_USABLE_FUEL_GAL)} gal.",
+    )
     startup_taxi_fuel = st.number_input(
         "Startup/Taxi Fuel (gal)",
         min_value=0.0,
@@ -2305,6 +2313,9 @@ if fuel_stop_segments:
         )
         segment_departure_tz = pytz.timezone(segment_departure_airport.timezone)
         segment_departure_local = current_segment_departure_dt.astimezone(segment_departure_tz)
+        # First policy pass resolves only the alternate choice (landing fuel is a
+        # placeholder); it is deliberately re-run after the leg brief with real
+        # landing fuel to compute the fuel handoff. Do not merge the two calls.
         segment_policy = resolve_fuel_stop_leg_policy(
             destination_identifier=segment_end_waypoint.identifier,
             is_final_leg=segment_index == len(fuel_stop_segments),
@@ -2363,7 +2374,14 @@ if fuel_stop_segments:
             reserve_minutes=float(reserve_minutes),
             landing_minimum_gal=float(landing_minimum),
             reserve_floor_gal=float(reserve_floor_gal) if reserve_floor_gal > 0 else None,
-            wind_model=route_wind_model,
+            # Per-leg model: reusing the full-route model would hand this leg's
+            # uncovered bins another geography's precomputed winds.
+            wind_model=build_route_wind_model(
+                segment_departure_airport,
+                segment_destination_airport,
+                weather.windtemps,
+                route_plan=fuel_segment.route_plan,
+            ),
             flight_levels=[focus_flight_level],
                 route_plan=fuel_segment.route_plan,
             )
@@ -2433,8 +2451,15 @@ if fuel_stop_segments:
             uplifts=fuel_stop_uplifts,
             alternates=fuel_stop_alternates,
             mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
+            usable_fuel_capacity_gal=MAX_USABLE_FUEL_GAL,
         )
         next_start_fuel = segment_policy.next_start_fuel_gal
+        if segment_policy.uplift_trimmed_gal > 0:
+            st.warning(
+                f"Leg {segment_index} uplift at {segment_end_waypoint.identifier} exceeds the "
+                f"{int(MAX_USABLE_FUEL_GAL)} gal usable capacity; next start fuel trimmed by "
+                f"{segment_policy.uplift_trimmed_gal:.0f} gal to tank capacity."
+            )
         fuel_stop_segment_rows.append(
             {
                 "Leg": segment_index,

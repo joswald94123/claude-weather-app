@@ -73,6 +73,7 @@ class FuelStopLegPolicy:
     alternate_fuel_excluded: bool
     uplift_gal: float | None
     next_start_fuel_gal: float
+    uplift_trimmed_gal: float = 0.0
 
 
 def destination_arrival_fuel_gal(
@@ -95,6 +96,7 @@ def resolve_fuel_stop_leg_policy(
     uplifts: dict[str, float],
     alternates: dict[str, str],
     mission_alternate_code: str | None = None,
+    usable_fuel_capacity_gal: float | None = None,
 ) -> FuelStopLegPolicy:
     """Resolve explicit uplift, legacy full reset, and alternate fallback consistently."""
 
@@ -108,12 +110,17 @@ def resolve_fuel_stop_leg_policy(
         next_start_fuel = max(float(landing_fuel_gal), 0.0) + max(float(explicit_uplift), 0.0)
     else:
         next_start_fuel = max(float(default_start_fuel_gal), 0.0)
+    uplift_trimmed_gal = 0.0
+    if usable_fuel_capacity_gal is not None and next_start_fuel > float(usable_fuel_capacity_gal):
+        uplift_trimmed_gal = next_start_fuel - float(usable_fuel_capacity_gal)
+        next_start_fuel = float(usable_fuel_capacity_gal)
     return FuelStopLegPolicy(
         alternate_code=alternate_code,
         alternate_is_explicit=explicit_alternate is not None,
         alternate_fuel_excluded=not is_final_leg and alternate_code is None,
         uplift_gal=max(float(explicit_uplift), 0.0) if explicit_uplift is not None else None,
         next_start_fuel_gal=next_start_fuel,
+        uplift_trimmed_gal=uplift_trimmed_gal,
     )
 
 
