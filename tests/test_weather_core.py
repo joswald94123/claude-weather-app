@@ -2455,3 +2455,31 @@ def test_descent_bands_sample_touchdown_winds_at_destination_not_tod(monkeypatch
     # latitude) and the top-of-descent band farther back along the route.
     assert lowest_band[1] > highest_band[1]
     assert lowest_band[1] == pytest.approx(40.0, abs=0.2)
+
+
+def test_mission_risk_uses_worst_leg_margin_override_for_refueled_missions():
+    """Verify a healthy nonstop margin cannot mask a short leg on a refueled mission."""
+
+    weather = fetch_noaa_weather(["KSTS"], session=_BrokenSession())  # type: ignore[arg-type]
+    safe_point = build_mission_brief(
+        AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0),
+        AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0),
+        departure_date=dt.date(2026, 3, 5),
+        departure_time_local=dt.time(10, 0),
+        is_return_leg=False,
+        start_fuel_gal=292,
+        flight_levels=[300],
+    ).points[0]
+    assert safe_point.reserve_margin_gal > 0
+
+    summary = build_mission_risk_summary(
+        weather=weather,
+        segment_hazards=[],
+        mission_point=safe_point,
+        thresholds=MissionRiskThresholds(),
+        reserve_margin_override_gal=-12,
+        reserve_margin_context="Leg 2",
+    )
+
+    assert summary.score == 3
+    assert any("shortfall 12 gal (Leg 2)" in reason for reason in summary.reasons)

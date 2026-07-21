@@ -99,6 +99,7 @@ from weather_core import (  # noqa: E402
 _REQUIRED_ROUTE_PLANNING_EXPORTS = {
     "chain_multi_leg_timings",
     "destination_arrival_fuel_gal",
+    "resolve_mission_headline",
 }
 if not _REQUIRED_ROUTE_PLANNING_EXPORTS.issubset(vars(_route_planning)):
     importlib.reload(_route_planning)
@@ -118,6 +119,7 @@ RouteWaypoint = _route_planning.RouteWaypoint
 build_route_plan = _route_planning.build_route_plan
 chain_multi_leg_timings = _route_planning.chain_multi_leg_timings
 destination_arrival_fuel_gal = _route_planning.destination_arrival_fuel_gal
+resolve_mission_headline = _route_planning.resolve_mission_headline
 parse_airborne_ete = _route_planning.parse_airborne_ete
 normalize_route_tokens = _route_planning.normalize_route_tokens
 route_progress_warning = _route_planning.route_progress_warning
@@ -2247,12 +2249,6 @@ forecast_quality_checks = evaluate_terminal_forecast_quality(
         **({"Alternate": alternate_airport.icao} if alternate_airport is not None else {}),
     },
 )
-mission_risk_summary = build_mission_risk_summary(
-    weather=weather,
-    segment_hazards=focus_segment_hazards,
-    mission_point=focus_point,
-    thresholds=mission_risk_thresholds,
-)
 fuel_stop_segments: tuple[RouteFuelSegment, ...] = (
     split_route_plan_at_fuel_stops(route_plan)
     if route_plan is not None and any(getattr(waypoint, "is_fuel_stop", False) for waypoint in route_plan.waypoints)
@@ -2260,6 +2256,7 @@ fuel_stop_segments: tuple[RouteFuelSegment, ...] = (
 )
 fuel_stop_segment_rows: list[dict[str, object]] = []
 segment_arrival_fuels_gal: list[float] = []
+leg_reserve_margins_gal: list[tuple[str, int]] = []
 range_insets: list[UiRangeInset] = []
 if fuel_stop_segments:
     current_segment_departure_dt = selected_etd
@@ -2438,6 +2435,7 @@ if fuel_stop_segments:
                 "Forecast Quality": segment_quality.label if segment_quality is not None else "No material mismatch",
             }
         )
+        leg_reserve_margins_gal.append((f"Leg {segment_index}", int(segment_point.reserve_margin_gal)))
         current_segment_departure_dt = segment_eta_dt + dt.timedelta(minutes=float(fuel_stop_ground_minutes))
         current_segment_start_fuel = next_start_fuel
     legal_alternate_assessment = evaluate_legal_alternate_requirement(
@@ -2446,6 +2444,22 @@ if fuel_stop_segments:
         eta_utc=mission_arrival_eta_utc,
         has_destination_approach=bool(destination_has_approach),
     )
+mission_headline = resolve_mission_headline(
+    nonstop_reserve_margin_gal=focus_reserve_margin,
+    nonstop_fob_at_landing_gal=focus_fuel_at_dest,
+    leg_reserve_margins_gal=leg_reserve_margins_gal,
+    leg_arrival_fuels_gal=segment_arrival_fuels_gal,
+)
+mission_risk_summary = build_mission_risk_summary(
+    weather=weather,
+    segment_hazards=focus_segment_hazards,
+    mission_point=focus_point,
+    thresholds=mission_risk_thresholds,
+    reserve_margin_override_gal=(
+        mission_headline.reserve_margin_gal if mission_headline.basis == "multi-leg" else None
+    ),
+    reserve_margin_context=mission_headline.margin_leg_label,
+)
 if (
     windtemp_feed_status is not None
     and windtemp_feed_status.valid_to_utc is not None
@@ -2526,8 +2540,12 @@ route_context_svg = build_route_context_svg(
 )
 # Keep the hero header scannable even when the planned route includes many fixes.
 hero_route_title = f"{departure_airport.icao} -> {destination_airport.icao}"
-reserve_margin_pill = f"Reserve margin {focus_reserve_margin:+d} gal"
-reserve_margin_tone = _tone_class_for_margin(focus_reserve_margin, mission_risk_thresholds)
+reserve_margin_pill = (
+    f"Worst leg reserve margin {mission_headline.reserve_margin_gal:+d} gal ({mission_headline.margin_leg_label})"
+    if mission_headline.basis == "multi-leg"
+    else f"Reserve margin {mission_headline.reserve_margin_gal:+d} gal"
+)
+reserve_margin_tone = _tone_class_for_margin(mission_headline.reserve_margin_gal, mission_risk_thresholds)
 
 st.markdown(
     _build_route_hero(
@@ -2636,6 +2654,11 @@ with mission_tab:
         ),
         unsafe_allow_html=True,
     )
+    if fuel_stop_segments:
+        st.caption(
+            "Matrix rows are nonstop what-if comparisons across altitudes; "
+            "the fuel-stop table below is the planned mission."
+        )
     mission_cards = st.columns(6)
     landing_fuel_summary = landing_fuel_presentation(
         fuel_on_board_gal=focus_fuel_at_dest,
@@ -2669,9 +2692,14 @@ with mission_tab:
     with mission_cards[3]:
         _render_insight_card(
             "FOB at landing",
-            f"{focus_fuel_at_dest} gal",
-            landing_fuel_summary.card_detail,
-            tone_class=_tone_class_for_margin(focus_reserve_margin, mission_risk_thresholds),
+            f"{mission_headline.fob_at_landing_gal} gal",
+            (
+                "After planned fuel stops | worst leg margin "
+                f"{mission_headline.reserve_margin_gal:+d} gal ({mission_headline.margin_leg_label})"
+                if mission_headline.basis == "multi-leg"
+                else landing_fuel_summary.card_detail
+            ),
+            tone_class=_tone_class_for_margin(mission_headline.reserve_margin_gal, mission_risk_thresholds),
         )
     with mission_cards[4]:
         _render_insight_card(
@@ -2688,7 +2716,14 @@ with mission_tab:
             tone_class=_tone_class_for_score(mission_risk_summary.score),
         )
     # Keep the six-card band aligned while retaining the full fuel audit trail.
-    st.caption(landing_fuel_summary.breakdown)
+    if mission_headline.basis == "multi-leg":
+        st.caption(
+            "Nonstop what-if basis for the matrix rows: "
+            + landing_fuel_summary.breakdown
+            + " Headline FOB and margin track the planned legs; see the fuel-stop table for per-leg requirements."
+        )
+    else:
+        st.caption(landing_fuel_summary.breakdown)
     if use_tail_loading and focus_point is not None:
         with st.expander("Actual vs. Modeled Calibration", expanded=False):
             modeled_minutes = int(parse_airborne_ete(focus_ete_text).total_seconds() // 60)

@@ -1866,6 +1866,8 @@ def build_mission_risk_summary(
     segment_hazards: list[SegmentHazard],
     mission_point: MissionPoint | None,
     thresholds: MissionRiskThresholds | None = None,
+    reserve_margin_override_gal: int | None = None,
+    reserve_margin_context: str | None = None,
 ) -> MissionRiskSummary:
     """Score known mission risk while reporting feed health as confidence evidence."""
 
@@ -1917,21 +1919,28 @@ def build_mission_risk_summary(
         )
 
     if mission_point is not None:
-        if mission_point.reserve_margin_gal < active_thresholds.fuel_high_margin_gal:
+        # A refueled mission is scored on its worst planned leg, not the nonstop fiction.
+        margin_gal = (
+            reserve_margin_override_gal
+            if reserve_margin_override_gal is not None
+            else mission_point.reserve_margin_gal
+        )
+        margin_suffix = f" ({reserve_margin_context})" if reserve_margin_context else ""
+        if margin_gal < active_thresholds.fuel_high_margin_gal:
             scores.append(3)
-            if mission_point.reserve_margin_gal < 0:
-                reasons.append(f"Fuel reserve shortfall {abs(mission_point.reserve_margin_gal)} gal")
+            if margin_gal < 0:
+                reasons.append(f"Fuel reserve shortfall {abs(margin_gal)} gal{margin_suffix}")
             else:
                 reasons.append(
                     "Fuel reserve margin "
-                    f"{mission_point.reserve_margin_gal} gal below high-risk threshold "
-                    f"{active_thresholds.fuel_high_margin_gal} gal"
+                    f"{margin_gal} gal below high-risk threshold "
+                    f"{active_thresholds.fuel_high_margin_gal} gal{margin_suffix}"
                 )
-        elif mission_point.reserve_margin_gal < active_thresholds.fuel_caution_margin_gal:
+        elif margin_gal < active_thresholds.fuel_caution_margin_gal:
             scores.append(2)
-            reasons.append(f"Fuel reserve margin {mission_point.reserve_margin_gal} gal")
+            reasons.append(f"Fuel reserve margin {margin_gal} gal{margin_suffix}")
         else:
-            reasons.append(f"Fuel reserve margin {mission_point.reserve_margin_gal} gal")
+            reasons.append(f"Fuel reserve margin {margin_gal} gal{margin_suffix}")
 
     score = max(scores, default=0)
     confidence = weather.data_confidence

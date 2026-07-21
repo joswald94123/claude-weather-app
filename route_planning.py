@@ -473,3 +473,47 @@ def route_progress_warning(route_plan: RoutePlan) -> str | None:
     if route_plan.total_distance_nm > direct_distance_nm * 1.6:
         return "Waypoint order creates a large detour relative to the direct route. Verify the sequence."
     return None
+
+
+@dataclass(frozen=True)
+class MissionHeadline:
+    """Fuel figures the mission summary surfaces must show for the planned mission."""
+
+    basis: str
+    reserve_margin_gal: int
+    margin_leg_label: str | None
+    fob_at_landing_gal: int
+
+
+def resolve_mission_headline(
+    *,
+    nonstop_reserve_margin_gal: int,
+    nonstop_fob_at_landing_gal: int,
+    leg_reserve_margins_gal: Sequence[tuple[str, int]] = (),
+    leg_arrival_fuels_gal: Sequence[float] = (),
+) -> MissionHeadline:
+    """Pick headline fuel numbers: worst planned leg when refueling, else nonstop.
+
+    A refueled mission's nonstop figures describe a flight that will not be
+    flown; the headline must track the worst planned leg and the final leg's
+    arrival fuel instead.
+    """
+
+    if not leg_reserve_margins_gal:
+        return MissionHeadline(
+            basis="nonstop",
+            reserve_margin_gal=int(nonstop_reserve_margin_gal),
+            margin_leg_label=None,
+            fob_at_landing_gal=int(nonstop_fob_at_landing_gal),
+        )
+    worst_label, worst_margin_gal = min(leg_reserve_margins_gal, key=lambda item: item[1])
+    return MissionHeadline(
+        basis="multi-leg",
+        reserve_margin_gal=int(worst_margin_gal),
+        margin_leg_label=worst_label,
+        fob_at_landing_gal=(
+            int(round(leg_arrival_fuels_gal[-1]))
+            if leg_arrival_fuels_gal
+            else int(nonstop_fob_at_landing_gal)
+        ),
+    )

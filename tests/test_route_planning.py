@@ -15,6 +15,7 @@ from route_planning import (
     route_point_at_distance_nm,
     route_progress_warning,
     resolve_fuel_stop_leg_policy,
+    resolve_mission_headline,
     route_track_at_distance_nm,
     split_route_plan_at_fuel_stops,
     parse_airborne_ete,
@@ -217,3 +218,33 @@ def test_destination_range_fuel_uses_final_chained_leg_arrival():
 
     assert destination_arrival_fuel_gal(42, [80, 67, 55]) == 55
     assert destination_arrival_fuel_gal(42, []) == 42
+
+
+def test_mission_headline_prefers_worst_leg_when_refueling():
+    """Verify a refueled mission's headline tracks the worst planned leg, not the nonstop."""
+
+    headline = resolve_mission_headline(
+        nonstop_reserve_margin_gal=-31,
+        nonstop_fob_at_landing_gal=29,
+        leg_reserve_margins_gal=[("Leg 1", 40), ("Leg 2", 12), ("Leg 3", 55)],
+        leg_arrival_fuels_gal=[80.0, 65.0, 110.0],
+    )
+
+    assert headline.basis == "multi-leg"
+    assert headline.reserve_margin_gal == 12
+    assert headline.margin_leg_label == "Leg 2"
+    assert headline.fob_at_landing_gal == 110
+
+
+def test_mission_headline_passes_through_nonstop_missions():
+    """Verify nonstop missions keep their own margin and FOB unchanged."""
+
+    headline = resolve_mission_headline(
+        nonstop_reserve_margin_gal=23,
+        nonstop_fob_at_landing_gal=95,
+    )
+
+    assert headline.basis == "nonstop"
+    assert headline.reserve_margin_gal == 23
+    assert headline.margin_leg_label is None
+    assert headline.fob_at_landing_gal == 95
