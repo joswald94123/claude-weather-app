@@ -43,9 +43,14 @@ MAX_WIND_STATION_DISTANCE_NM = 300.0
 MULTI_REGION_ROUTE_DISTANCE_NM = 500.0
 CRUISE_BIN_DISTANCE_NM = 75.0
 GAIRMET_SNAPSHOT_HALF_WINDOW = dt.timedelta(hours=1, minutes=30)
+TCF_VALIDITY_HALF_WINDOW = dt.timedelta(hours=3)
 PIREP_ALTITUDE_HALF_BAND_FT = 3000
 PIREP_VALID_BEFORE = dt.timedelta(hours=1)
 PIREP_VALID_AFTER = dt.timedelta(hours=2)
+PIREP_BBOX_PADDING_SINGLE_DEG = 2.5
+PIREP_BBOX_PADDING_MULTI_DEG = 1.5
+ALTITUDE_BAND_OVERLAP_TOLERANCE_FT = 500
+DEFAULT_HAZARD_TOP_FT = 60000
 WIND_COVERAGE_PROBE_ALTITUDE_FT = 30000.0
 IDW_DISTANCE_SOFTENING_NM = 20.0
 IDW_MAX_STATIONS = 4
@@ -571,7 +576,9 @@ def _lowest_ceiling_ft(
         return vertical_visibility_ft
     cover_text = str(cover or "").strip().upper()
     if cover_text.startswith("VV"):
-        return _safe_int(cover_text.replace("VV", ""))
+        # Raw METAR VV groups encode hundreds of feet ("VV003" = 300 ft).
+        encoded_hundreds = _safe_int(cover_text.replace("VV", ""))
+        return encoded_hundreds * 100 if encoded_hundreds is not None else None
     return None
 
 
@@ -1815,7 +1822,7 @@ def _hazard_valid_for_time(hazard: HazardArea, reference_time_utc: dt.datetime |
     end = hazard.valid_to_utc
     if start and end:
         if start == end:
-            return abs((reference_time_utc - start).total_seconds()) <= 3 * 3600
+            return abs((reference_time_utc - start).total_seconds()) <= TCF_VALIDITY_HALF_WINDOW.total_seconds()
         return start <= reference_time_utc <= end
     if start:
         return reference_time_utc >= start
@@ -2741,20 +2748,30 @@ def _parse_hazard_areas(
             else:
                 continue
 
-            base_ft = _parse_altitude_feet(properties.get("base"), assume_hundreds=False) or _parse_altitude_feet(
-                properties.get("bottom"), assume_hundreds=False
-            ) or 0
-            top_ft = _parse_altitude_feet(properties.get("top"), assume_hundreds=False) or _parse_altitude_feet(
-                properties.get("altitudeHi"), assume_hundreds=False
-            ) or 60000
+            # A base of 0 is a valid surface anchor; fall through only when a field is absent.
+            base_ft = _parse_altitude_feet(properties.get("base"), assume_hundreds=False)
+            if base_ft is None:
+                base_ft = _parse_altitude_feet(properties.get("bottom"), assume_hundreds=False)
+            if base_ft is None:
+                base_ft = 0
+            top_ft = _parse_altitude_feet(properties.get("top"), assume_hundreds=False)
+            if top_ft is None:
+                top_ft = _parse_altitude_feet(properties.get("altitudeHi"), assume_hundreds=False)
+            if top_ft is None:
+                top_ft = DEFAULT_HAZARD_TOP_FT
             if top_ft < base_ft:
-                base_ft, top_ft = base_ft, 60000
+                base_ft, top_ft = top_ft, base_ft
+            # Live CWA GeoJSON carries a numeric seriesId; urgent CWAs mark themselves
+            # with a "UCWA" product header inside cwaText instead.
+            is_urgent = (
+                str(properties.get("seriesId") or properties.get("series") or "").upper().startswith("U")
+                or str(properties.get("cwaText") or "").lstrip().upper().startswith("UCWA")
+            )
+            qualifier_score = _risk_score_from_severity(properties.get("qualifier"), min_score=2)
             areas.append(
                 HazardArea(
                     hazard_type=hazard_type,
-                    severity_score=3
-                    if str(properties.get("seriesId") or properties.get("series") or "").upper().startswith("U")
-                    else 2,
+                    severity_score=3 if is_urgent else qualifier_score,
                     base_ft=base_ft,
                     top_ft=top_ft,
                     polygons=polygons,
@@ -3104,7 +3121,7 @@ def _pirep_query_params_for_airports(icaos: list[str]) -> dict[str, object]:
         longitudes = [longitude for _latitude, longitude in locations]
         # A modest bbox covers the terminal/route neighborhood without triggering an invalid
         # unconstrained request; route-specific filtering still happens later in hazard scoring.
-        padding_deg = 2.5 if len(locations) == 1 else 1.5
+        padding_deg = PIREP_BBOX_PADDING_SINGLE_DEG if len(locations) == 1 else PIREP_BBOX_PADDING_MULTI_DEG
         min_lon = max(min(longitudes) - padding_deg, -180.0)
         min_lat = max(min(latitudes) - padding_deg, -90.0)
         max_lon = min(max(longitudes) + padding_deg, 180.0)
@@ -3403,7 +3420,11 @@ def fetch_noaa_weather(
             metar_risk=_terminal_risk_from_metar_row(metar),
             taf_risk=_terminal_risk_from_taf_row(taf),
             metar_observed_at_utc=_parse_epoch_utc(metar.get("obsTime")) or _parse_iso_utc(metar.get("reportTime")),
-            metar_ceiling_ft=_lowest_ceiling_ft(cover=metar.get("cover"), clouds=metar.get("clouds")),
+            metar_ceiling_ft=_lowest_ceiling_ft(
+                cover=metar.get("cover"),
+                clouds=metar.get("clouds"),
+                vertical_visibility=metar.get("vertVis"),
+            ),
             metar_visibility_sm=_parse_visibility_sm(metar.get("visib")),
             metar_wind_speed_kt=_safe_int(metar.get("wspd")),
             metar_wind_gust_kt=_safe_int(metar.get("wgst")),
@@ -4078,7 +4099,7 @@ def _altitude_band_overlaps(
     band_high_ft: int,
     hazard_base_ft: int,
     hazard_top_ft: int,
-    tolerance_ft: int = 500,
+    tolerance_ft: int = ALTITUDE_BAND_OVERLAP_TOLERANCE_FT,
 ) -> bool:
     """Return whether an aircraft altitude band intersects a hazard altitude band."""
 

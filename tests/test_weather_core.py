@@ -2483,3 +2483,121 @@ def test_mission_risk_uses_worst_leg_margin_override_for_refueled_missions():
 
     assert summary.score == 3
     assert any("shortfall 12 gal (Leg 2)" in reason for reason in summary.reasons)
+
+
+def test_cwa_transposed_band_swaps_and_sev_qualifier_escalates():
+    """Verify a base/top transposition is corrected and a SEV qualifier scores High."""
+
+    polygon = {
+        "type": "Polygon",
+        "coordinates": [[[-123.0, 38.0], [-122.0, 38.0], [-122.0, 39.0], [-123.0, 38.0]]],
+    }
+    areas = _parse_hazard_areas(
+        gairmet_rows=[],
+        airsigmet_rows=[],
+        tcf_payload={},
+        cwa_payload={
+            "features": [
+                {
+                    "properties": {"phenom": "TURB", "qualifier": "SEV", "base": 33000, "top": 8000},
+                    "geometry": polygon,
+                }
+            ]
+        },
+        pirep_rows=[],
+    )
+
+    assert len(areas) == 1
+    assert areas[0].base_ft == 8000
+    assert areas[0].top_ft == 33000
+    assert areas[0].severity_score == 3
+
+
+def test_cwa_urgent_marker_in_product_text_escalates_severity():
+    """Verify a numeric seriesId cannot hide the UCWA urgency carried in cwaText."""
+
+    polygon = {
+        "type": "Polygon",
+        "coordinates": [[[-123.0, 38.0], [-122.0, 38.0], [-122.0, 39.0], [-123.0, 38.0]]],
+    }
+    areas = _parse_hazard_areas(
+        gairmet_rows=[],
+        airsigmet_rows=[],
+        tcf_payload={},
+        cwa_payload={
+            "features": [
+                {
+                    "properties": {"phenom": "ICE", "seriesId": 104, "cwaText": "UCWA ZOA1 041815"},
+                    "geometry": polygon,
+                }
+            ]
+        },
+        pirep_rows=[],
+    )
+
+    assert len(areas) == 1
+    assert areas[0].hazard_type == "icing"
+    assert areas[0].severity_score == 3
+
+
+def test_vv_cover_fallback_decodes_hundreds_of_feet():
+    """Verify a raw VV cover group reads as hundreds of feet, not feet."""
+
+    assert weather_core._lowest_ceiling_ft(cover="VV003", clouds=None) == 300
+
+
+def test_forecast_quality_sees_obscured_sky_ceiling():
+    """Verify an OVX/vertVis METAR ceiling participates in the METAR-vs-TAF check."""
+
+    session = _RoutingSession(
+        {
+            "https://aviationweather.gov/api/data/metar": _FakeResponse(
+                json_payload=[
+                    {
+                        "icaoId": "KSTS",
+                        "obsTime": 1772754780,
+                        "rawOb": "METAR KSTS 052353Z 00000KT 6SM BR VV002 08/06 A2992",
+                        "reportTime": "2026-03-06T00:00:00.000Z",
+                        "visib": "6+",
+                        "cover": "OVX",
+                        "vertVis": 200,
+                        "clouds": [{"cover": "OVX"}],
+                    },
+                ]
+            ),
+            "https://aviationweather.gov/api/data/taf": _FakeResponse(
+                json_payload=[
+                    {
+                        "icaoId": "KSTS",
+                        "validTimeFrom": 1772733600,
+                        "validTimeTo": 1772820000,
+                        "rawTAF": "STS TAF",
+                        "issueTime": "2026-03-05T17:24:00.000Z",
+                        "fcsts": [
+                            {
+                                "timeFrom": 1772733600,
+                                "timeTo": 1772769600,
+                                "visib": "6+",
+                                "wxString": None,
+                                "clouds": [{"cover": "BKN", "base": 2500}],
+                            }
+                        ],
+                    },
+                ]
+            ),
+            "https://aviationweather.gov/api/data/windtemp": _FakeResponse(text_payload=""),
+            "https://aviationweather.gov/api/data/gairmet": _FakeResponse(json_payload=[]),
+            "https://aviationweather.gov/api/data/airsigmet": _FakeResponse(json_payload=[]),
+            "https://aviationweather.gov/api/data/tcf": _FakeResponse(json_payload={"features": []}),
+        }
+    )
+    weather = fetch_noaa_weather(["KSTS"], session=session)  # type: ignore[arg-type]
+
+    checks = evaluate_terminal_forecast_quality(
+        weather=weather,
+        phase_airports={"Arrival": "KSTS"},
+    )
+
+    assert len(checks) == 1
+    assert checks[0].score >= 2
+    assert any("Observed ceiling" in reason for reason in checks[0].reasons)
