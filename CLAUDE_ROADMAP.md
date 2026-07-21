@@ -26,8 +26,12 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   models for chained legs; falsy-track cleanup.
 - FIX-08: RELEASE_VERSION guarded read; FAA failure-path tests; clean 3.13 lock
   regen; unknown-hazard-type rendering; workflow timeouts.
-- FIX-05 remainder: spinner scope; widget/session-state patterns; risk-reason
-  attribution and escalation wording; dead code.
+- DONE (v.23) FIX-05 remainder: spinners over per-leg briefs, destination
+  rings, and the vertical profile; widget default+session-state warnings
+  removed (cruise, ETD, hazard-detail); ignored per-leg alternate entries
+  captioned; terminal-risk reasons name the airport; widespread-exposure
+  escalation labeled; TAF-risk card scoped "worst of full TAF"; matrix wind
+  sign legend; dead helpers deleted.
 
 ## Phase 3 — structural convergence (FIX-09 → brief-as-document)
 1. FIX-09: extract the fuel-stop orchestration engine into core

@@ -580,14 +580,6 @@ def _parse_flight_level_number(flight_level_text: str) -> int | None:
         return None
 
 
-def _wind_direction_label(wind_knots: int) -> str:
-    """Return the compact UI label for headwind or tailwind direction."""
-
-    if wind_knots >= 0:
-        return "Tailwind ------->"
-    return "<------- Headwind"
-
-
 def _timezone_abbrev(value: dt.datetime, timezone_name: str) -> str:
     """Return a display timezone abbreviation with a safe fallback."""
 
@@ -656,12 +648,6 @@ def _confidence_tone_class(confidence: str) -> str:
         "Low": "tone-high",
         "Unknown": "tone-high",
     }.get(confidence, "tone-low")
-
-
-def _ete_to_timedelta(ete_text: str) -> dt.timedelta:
-    """Convert mission ETE display text into a timedelta for ETA calculations."""
-
-    return parse_airborne_ete(ete_text)
 
 
 def _parse_stop_value_assignments(raw_text: str) -> dict[str, str]:
@@ -1415,6 +1401,16 @@ with st.sidebar:
     )
     fuel_stop_uplifts = _parse_fuel_stop_uplifts(fuel_stop_uplift_text)
     fuel_stop_alternates = _parse_fuel_stop_alternates(fuel_stop_alternate_text)
+    _ignored_alternate_entries = {
+        key: value
+        for key, value in _parse_stop_value_assignments(fuel_stop_alternate_text).items()
+        if key not in fuel_stop_alternates
+    }
+    if _ignored_alternate_entries:
+        st.caption(
+            "Ignored alternate entries (not valid ICAO idents): "
+            + ", ".join(f"{key}={value}" for key, value in sorted(_ignored_alternate_entries.items()))
+        )
     fuel_stop_approach_airports = set(normalize_route_tokens(fuel_stop_approach_text))
     arr_icao = st.text_input(
         "Destination ICAO",
@@ -1776,7 +1772,6 @@ with st.sidebar:
     cruise_selection = st.selectbox(
         "Cruise Flight Level",
         options=cruise_options,
-        index=0,
         key="cruise_flight_level",
     )
     selected_cruise_fl: int | None = None
@@ -1817,37 +1812,25 @@ with st.sidebar:
         minute_options = [f"{m:02d}" for m in range(0, 60, 5)]
         ampm_options = ["AM", "PM"]
 
-        default_hour = st.session_state.get("etd_hour", 10)
-        default_minute = st.session_state.get("etd_minute", "00")
-        default_ampm = st.session_state.get("etd_ampm", "AM")
-
-        if default_hour not in hour_options:
-            default_hour = 10
-        if default_minute not in minute_options:
-            default_minute = "00"
-        if default_ampm not in ampm_options:
-            default_ampm = "AM"
-
+        # Session state is seeded before these widgets exist, so the widgets take
+        # their values purely from state (no default args, no Streamlit warning).
         hour_col, minute_col, ampm_col = st.columns(3)
         with hour_col:
             etd_hour = st.selectbox(
                 "Hour",
                 options=hour_options,
-                index=hour_options.index(default_hour),
                 key="etd_hour",
             )
         with minute_col:
             etd_minute = st.selectbox(
                 "Minute",
                 options=minute_options,
-                index=minute_options.index(default_minute),
                 key="etd_minute",
             )
         with ampm_col:
             etd_ampm = st.selectbox(
                 "AM/PM",
                 options=ampm_options,
-                index=ampm_options.index(default_ampm),
                 key="etd_ampm",
             )
 
@@ -2348,9 +2331,10 @@ if fuel_stop_segments:
         else:
             segment_alternate_route_label = "Not specified — alternate fuel excluded"
         try:
-            segment_brief = _build_mission_brief_compatible(
-                segment_departure_airport,
-                segment_destination_airport,
+            with st.spinner(f"Planning fuel-stop leg {segment_index}..."):
+                segment_brief = _build_mission_brief_compatible(
+                    segment_departure_airport,
+                    segment_destination_airport,
             departure_date=segment_departure_local.date(),
             departure_time_local=segment_departure_local.time().replace(second=0, microsecond=0, tzinfo=None),
             is_return_leg=False,
@@ -2535,7 +2519,8 @@ destination_range_fuel_gal = destination_arrival_fuel_gal(
     float(focus_fuel_at_dest),
     segment_arrival_fuels_gal,
 )
-destination_range_rings = _build_waypoint_range_rings(
+with st.spinner("Computing destination range rings..."):
+    destination_range_rings = _build_waypoint_range_rings(
     airport=destination_airport,
     fuel_on_board_gal=destination_range_fuel_gal,
     performance_profile=active_performance_profile_for_calc,
@@ -2690,7 +2675,6 @@ st.session_state["hazard_detail_last_cruise"] = focus_flight_level_text
 selected_hazard_fl_text = st.selectbox(
     "Hazard detail flight level",
     options=hazard_fl_options,
-    index=hazard_default_idx,
     key="hazard_detail_flight_level",
 )
 selected_hazard_fl = _parse_flight_level_number(selected_hazard_fl_text) or available_flight_levels[0]
@@ -2715,6 +2699,7 @@ with mission_tab:
             "Matrix rows are nonstop what-if comparisons across altitudes; "
             "the fuel-stop table below is the planned mission."
         )
+    st.caption("Wind (kts) is the signed time-weighted along-track average; positive = tailwind.")
     mission_cards = st.columns(6)
     landing_fuel_summary = landing_fuel_presentation(
         fuel_on_board_gal=focus_fuel_at_dest,
@@ -3112,9 +3097,10 @@ with hazard_tab:
             )
 
     try:
-        vertical_profile = build_route_vertical_profile(
-            departure_airport,
-            destination_airport,
+        with st.spinner("Rendering vertical profile..."):
+            vertical_profile = build_route_vertical_profile(
+                departure_airport,
+                destination_airport,
         hazard_areas=weather.hazard_areas,
         reference_time_utc=selected_etd.astimezone(dt.timezone.utc),
         flight_level=selected_hazard_fl,
@@ -3479,7 +3465,7 @@ with weather_tab:
                 risk_cols = st.columns(2)
                 for risk_col, risk_title, risk in (
                     (risk_cols[0], "METAR risk", wx.metar_risk if wx else None),
-                    (risk_cols[1], "TAF risk", wx.taf_risk if wx else None),
+                    (risk_cols[1], "TAF risk (worst of full TAF)", wx.taf_risk if wx else None),
                 ):
                     with risk_col:
                         if risk is None:

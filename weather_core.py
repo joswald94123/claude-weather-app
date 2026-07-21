@@ -1930,17 +1930,19 @@ def build_mission_risk_summary(
         confidence_reasons.append(f"Empty valid feeds: {', '.join(empty_feeds[:3])}")
 
     terminal_risks = [
-        risk
-        for airport in weather.airports.values()
+        (icao, risk)
+        for icao, airport in weather.airports.items()
         for risk in (airport.metar_risk, airport.taf_risk)
         if risk is not None
     ]
-    max_terminal_score = max((risk.score for risk in terminal_risks), default=0)
+    max_terminal_score = max((risk.score for _, risk in terminal_risks), default=0)
     if max_terminal_score:
         scores.append(max_terminal_score)
-        strongest = next(risk for risk in terminal_risks if risk.score == max_terminal_score)
+        strongest_icao, strongest = next(
+            (icao, risk) for icao, risk in terminal_risks if risk.score == max_terminal_score
+        )
         reason = strongest.reasons[0] if strongest.reasons else strongest.label
-        reasons.append(f"Terminal {strongest.source}: {reason}")
+        reasons.append(f"Terminal {strongest.source} {strongest_icao}: {reason}")
 
     max_route_score = max((row.overall_score for row in segment_hazards), default=0)
     if max_route_score:
@@ -1952,9 +1954,12 @@ def build_mission_risk_summary(
         elif impacted_fraction >= active_thresholds.route_caution_fraction:
             route_score = max(route_score, 2)
         scores.append(route_score)
-        reasons.append(
+        route_reason = (
             f"Route hazards: {hazard_label(max_route_score)} across {impacted}/{len(segment_hazards)} bins"
         )
+        if route_score > max_route_score:
+            route_reason += " (widespread exposure escalated the score)"
+        reasons.append(route_reason)
 
     if mission_point is not None:
         # A refueled mission is scored on its worst planned leg, not the nonstop fiction.

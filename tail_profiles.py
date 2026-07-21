@@ -6,7 +6,8 @@ import json
 from dataclasses import asdict, dataclass
 
 JET_A_POUNDS_PER_GALLON = 6.7
-# TBM 960 usable fuel; verify against the PIM before trusting for a different tail.
+# TBM 960 usable fuel when full — confirmed by the owner 2026-07-20. Re-verify
+# against the PIM before trusting for a different tail.
 MAX_USABLE_FUEL_GAL = 292.0
 
 
