@@ -54,6 +54,10 @@ def landing_fuel_presentation(
     alternate_and_reserve_gal: int,
     landing_minimum_gal: int,
     pilot_floor_gal: int,
+    taxi_fuel_gal: float | None = None,
+    climb_fuel_gal: float | None = None,
+    cruise_fuel_gal: float | None = None,
+    descent_fuel_gal: float | None = None,
 ) -> LandingFuelPresentation:
     """Keep the summary card compact while retaining every fuel-requirement input."""
 
@@ -65,6 +69,14 @@ def landing_fuel_presentation(
     else:
         comparison = f"Meets {effective_requirement_gal} gal required"
 
+    phase_fuels = (taxi_fuel_gal, climb_fuel_gal, cruise_fuel_gal, descent_fuel_gal)
+    composition = ""
+    if all(value is not None for value in phase_fuels):
+        composition = (
+            f" Burn composition: taxi {taxi_fuel_gal:.1f} + climb {climb_fuel_gal:.1f} + "
+            f"cruise {cruise_fuel_gal:.1f} + descent {descent_fuel_gal:.1f} gal, rounded up."
+        )
+
     return LandingFuelPresentation(
         card_detail=f"Gross touchdown FOB | {comparison}",
         breakdown=(
@@ -72,5 +84,6 @@ def landing_fuel_presentation(
             f"alternate or reserve use. Effective requirement {effective_requirement_gal} gal = max(alt + reserve "
             f"{alternate_and_reserve_gal}, landing minimum {landing_minimum_gal}, pilot floor {pilot_floor_gal}). "
             "Landing minimum protects arrival at the destination; a diversion draws it down en route to the alternate."
+            + composition
         ),
     )

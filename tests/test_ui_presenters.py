@@ -91,3 +91,22 @@ def test_landing_fuel_card_reports_positive_and_exact_margins():
 
     assert above.card_detail.endswith("15 gal above 60 gal required")
     assert exact.card_detail.endswith("Meets 60 gal required")
+
+
+def test_landing_fuel_breakdown_includes_ledger_phase_composition():
+    """Verify the audit caption shows the taxi/climb/cruise/descent composition."""
+
+    summary = landing_fuel_presentation(
+        fuel_on_board_gal=29,
+        fuel_status="Below reserve",
+        effective_requirement_gal=60,
+        alternate_and_reserve_gal=40,
+        landing_minimum_gal=60,
+        pilot_floor_gal=0,
+        taxi_fuel_gal=8.0,
+        climb_fuel_gal=22.2,
+        cruise_fuel_gal=210.5,
+        descent_fuel_gal=12.4,
+    )
+
+    assert "Burn composition: taxi 8.0 + climb 22.2 + cruise 210.5 + descent 12.4 gal" in summary.breakdown

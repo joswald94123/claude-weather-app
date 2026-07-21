@@ -2596,6 +2596,7 @@ with mission_tab:
         )
     st.caption("Wind (kts) is the signed time-weighted along-track average; positive = tailwind.")
     mission_cards = st.columns(6)
+    focus_fuel_ledger = getattr(focus_point, "fuel_ledger", None) if focus_point else None
     landing_fuel_summary = landing_fuel_presentation(
         fuel_on_board_gal=focus_fuel_at_dest,
         fuel_status=focus_fuel_status,
@@ -2603,6 +2604,10 @@ with mission_tab:
         alternate_and_reserve_gal=focus_calculated_required_fuel,
         landing_minimum_gal=int(math.ceil(float(landing_minimum))),
         pilot_floor_gal=focus_reserve_floor,
+        taxi_fuel_gal=focus_fuel_ledger.taxi_fuel_gal if focus_fuel_ledger else None,
+        climb_fuel_gal=focus_fuel_ledger.climb_fuel_gal if focus_fuel_ledger else None,
+        cruise_fuel_gal=focus_fuel_ledger.cruise_fuel_gal if focus_fuel_ledger else None,
+        descent_fuel_gal=focus_fuel_ledger.descent_fuel_gal if focus_fuel_ledger else None,
     )
     with mission_cards[0]:
         _render_insight_card(

@@ -1,6 +1,7 @@
 """Regression coverage for mission math, NOAA parsing, and hazard timing behavior."""
 
 import datetime as dt
+import math
 import threading
 
 import pytest
@@ -2730,6 +2731,12 @@ def test_build_multi_leg_plan_chains_fuel_timing_and_alternates():
     assert plan.leg_arrival_fuels_gal[-1] == float(second.point.fuel_at_dest)
     assert first.has_approach_confirmed is True
     assert first.alternate_route_label == "Not specified — alternate fuel excluded"
+    for leg in plan.legs:
+        leg_ledger = leg.point.fuel_ledger
+        assert leg_ledger is not None
+        assert leg_ledger.start_fuel_gal == int(round(leg.start_fuel_gal))
+        assert leg_ledger.fob_at_landing_gal == leg.point.fuel_at_dest
+        assert leg_ledger.reserve_margin_gal == leg.point.reserve_margin_gal
 
 
 def test_build_mission_brief_derives_direction_and_matches_the_swap_convention():
@@ -2804,3 +2811,49 @@ def test_numeric_severity_coding_matches_observed_awc_values(numeric_severity, e
     """Verify the documented numeric severity mapping, with >=4 conservatively High."""
 
     assert weather_core._risk_score_from_severity(numeric_severity) == expected_score
+
+
+def test_fuel_ledger_identities_and_projection_equality():
+    """Verify the ledger arithmetic identities and that displayed fields are projections."""
+
+    brief = build_mission_brief(
+        AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0),
+        AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0),
+        departure_date=dt.date(2026, 3, 5),
+        departure_time_local=dt.time(10, 0),
+        start_fuel_gal=292,
+        alternate_distance_nm=80.0,
+        reserve_minutes=45.0,
+        landing_minimum_gal=60.0,
+        reserve_floor_gal=70.0,
+        flight_levels=[300],
+    )
+    point = brief.points[0]
+    ledger = point.fuel_ledger
+    assert ledger is not None
+
+    # Arithmetic identities.
+    assert ledger.total_burn_gal == math.ceil(
+        ledger.taxi_fuel_gal + ledger.climb_fuel_gal + ledger.cruise_fuel_gal + ledger.descent_fuel_gal
+    )
+    assert ledger.fob_at_landing_gal == ledger.start_fuel_gal - ledger.total_burn_gal
+    assert ledger.alternate_plus_reserve_gal == ledger.alternate_fuel_gal + ledger.reserve_fuel_gal
+    assert ledger.effective_requirement_gal == max(
+        ledger.alternate_plus_reserve_gal, ledger.landing_minimum_gal, ledger.pilot_floor_gal
+    )
+    assert ledger.reserve_margin_gal == ledger.fob_at_landing_gal - ledger.effective_requirement_gal
+    assert ledger.taxi_fuel_gal > 0.0
+    assert ledger.climb_fuel_gal > 0.0
+    assert ledger.cruise_fuel_gal > 0.0
+    assert ledger.descent_fuel_gal > 0.0
+
+    # Displayed fields are exact projections of the ledger.
+    assert point.fuel_burn == ledger.total_burn_gal
+    assert point.fuel_at_dest == ledger.fob_at_landing_gal
+    assert point.alternate_fuel_gal == ledger.alternate_fuel_gal
+    assert point.reserve_fuel_gal == ledger.reserve_fuel_gal
+    assert point.calculated_required_landing_fuel_gal == ledger.alternate_plus_reserve_gal
+    assert point.reserve_floor_gal == ledger.pilot_floor_gal
+    assert point.required_landing_fuel_gal == ledger.effective_requirement_gal
+    assert point.reserve_margin_gal == ledger.reserve_margin_gal
+    assert point.fuel_status == ledger.fuel_status

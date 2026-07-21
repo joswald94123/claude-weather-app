@@ -88,6 +88,90 @@ class AirportData:
 
 
 @dataclass(frozen=True)
+class FuelLedger:
+    """The complete landing-fuel derivation for one planned flight level.
+
+    Every displayed fuel quantity is a projection of this ledger, so the numbers
+    can never disagree with one another: total_burn_gal = ceil(taxi + climb +
+    cruise + descent); fob_at_landing_gal = start - total burn;
+    effective_requirement_gal = max(alternate + reserve, landing minimum, pilot
+    floor); reserve_margin_gal = FOB - effective requirement.
+    """
+
+    start_fuel_gal: int
+    taxi_fuel_gal: float
+    climb_fuel_gal: float
+    cruise_fuel_gal: float
+    descent_fuel_gal: float
+    total_burn_gal: int
+    fob_at_landing_gal: int
+    alternate_fuel_gal: int
+    reserve_fuel_gal: int
+    alternate_plus_reserve_gal: int
+    landing_minimum_gal: int
+    pilot_floor_gal: int
+    effective_requirement_gal: int
+    reserve_margin_gal: int
+    fuel_status: str
+
+
+def build_fuel_ledger(
+    *,
+    start_fuel_gal: int,
+    taxi_fuel_gal: float,
+    climb_fuel_gal: float,
+    cruise_fuel_gal: float,
+    descent_fuel_gal: float,
+    alternate_fuel_gal: int,
+    reserve_fuel_gal: int,
+    landing_minimum_gal: int,
+    pilot_floor_gal: int,
+) -> FuelLedger:
+    """Derive burn, FOB, requirement, margin, and status from the raw components."""
+
+    total_burn_gal = int(
+        math.ceil(taxi_fuel_gal + climb_fuel_gal + cruise_fuel_gal + descent_fuel_gal)
+    )
+    fob_at_landing_gal = int(start_fuel_gal - total_burn_gal)
+    alternate_plus_reserve_gal = alternate_fuel_gal + reserve_fuel_gal
+    # Decision (Jack, 2026-07-20, FIX-07): the landing minimum is a floor protecting
+    # arrival at the INTENDED destination; a diversion draws it down en route to the
+    # alternate. The alternative reading (alt_fuel + max(reserve, landing_min), i.e. a
+    # floor at final touchdown including a diversion) was considered and rejected.
+    effective_requirement_gal = max(
+        alternate_plus_reserve_gal,
+        landing_minimum_gal,
+        pilot_floor_gal,
+    )
+    reserve_margin_gal = fob_at_landing_gal - effective_requirement_gal
+    if reserve_margin_gal < 0:
+        fuel_status = "Below reserve"
+    elif pilot_floor_gal > max(alternate_plus_reserve_gal, landing_minimum_gal):
+        fuel_status = "Meets pilot floor"
+    elif landing_minimum_gal > alternate_plus_reserve_gal:
+        fuel_status = "Meets landing minimum"
+    else:
+        fuel_status = "Meets reserve"
+    return FuelLedger(
+        start_fuel_gal=start_fuel_gal,
+        taxi_fuel_gal=taxi_fuel_gal,
+        climb_fuel_gal=climb_fuel_gal,
+        cruise_fuel_gal=cruise_fuel_gal,
+        descent_fuel_gal=descent_fuel_gal,
+        total_burn_gal=total_burn_gal,
+        fob_at_landing_gal=fob_at_landing_gal,
+        alternate_fuel_gal=alternate_fuel_gal,
+        reserve_fuel_gal=reserve_fuel_gal,
+        alternate_plus_reserve_gal=alternate_plus_reserve_gal,
+        landing_minimum_gal=landing_minimum_gal,
+        pilot_floor_gal=pilot_floor_gal,
+        effective_requirement_gal=effective_requirement_gal,
+        reserve_margin_gal=reserve_margin_gal,
+        fuel_status=fuel_status,
+    )
+
+
+@dataclass(frozen=True)
 class MissionPoint:
     """Calculated fuel, time, and reserve outcome for one candidate flight level."""
 
@@ -107,6 +191,7 @@ class MissionPoint:
     reserve_margin_gal: int = 0
     fuel_status: str = "Unknown"
     performance_limit_notes: tuple[str, ...] = ()
+    fuel_ledger: FuelLedger | None = None
 
 
 @dataclass(frozen=True)
@@ -5300,9 +5385,6 @@ def _flight_level_point(
         route_plan=route_plan,
         segment_count=segment_count,
     )
-    # Displayed planning quantities round conservatively so sub-unit fractions never look optimistic.
-    fuel_burn = int(math.ceil(profile.total_fuel_gal))
-    fuel_at_dest = int(start_fuel_gal - fuel_burn)
     cruise_hours = sum(profile.cruise_segment_hours)
     cruise_fuel_gph = profile.cruise_fuel_gal / cruise_hours if cruise_hours > 0.0 else FUEL_BURN_GPH
     # An alternate can lie in any direction from the destination. Reusing the
@@ -5329,31 +5411,29 @@ def _flight_level_point(
         math.ceil((bounded_alternate_distance_nm / max(alternate_cruise_speed_kts, 120.0)) * alternate_fuel_gph)
     )
     reserve_fuel_gal = int(math.ceil((bounded_reserve_minutes / 60.0) * cruise_fuel_gph))
-    calculated_required_landing_fuel_gal = alternate_fuel_gal + reserve_fuel_gal
-    bounded_landing_minimum_gal = int(math.ceil(max(float(landing_minimum_gal), 0.0)))
-    bounded_reserve_floor_gal = (
-        int(math.ceil(max(float(reserve_floor_gal), 0.0)))
-        if reserve_floor_gal is not None
-        else 0
+    # One ledger derives every displayed fuel figure; the MissionPoint fields below
+    # are projections of it, never independent arithmetic.
+    ledger = build_fuel_ledger(
+        start_fuel_gal=int(start_fuel_gal),
+        taxi_fuel_gal=max(
+            profile.total_fuel_gal
+            - profile.climb_fuel_gal
+            - profile.cruise_fuel_gal
+            - profile.descent_fuel_gal,
+            0.0,
+        ),
+        climb_fuel_gal=profile.climb_fuel_gal,
+        cruise_fuel_gal=profile.cruise_fuel_gal,
+        descent_fuel_gal=profile.descent_fuel_gal,
+        alternate_fuel_gal=alternate_fuel_gal,
+        reserve_fuel_gal=reserve_fuel_gal,
+        landing_minimum_gal=int(math.ceil(max(float(landing_minimum_gal), 0.0))),
+        pilot_floor_gal=(
+            int(math.ceil(max(float(reserve_floor_gal), 0.0)))
+            if reserve_floor_gal is not None
+            else 0
+        ),
     )
-    # Decision (Jack, 2026-07-20, FIX-07): the landing minimum is a floor protecting
-    # arrival at the INTENDED destination; a diversion draws it down en route to the
-    # alternate. The alternative reading (alt_fuel + max(reserve, landing_min), i.e. a
-    # floor at final touchdown including a diversion) was considered and rejected.
-    required_landing_fuel_gal = max(
-        calculated_required_landing_fuel_gal,
-        bounded_landing_minimum_gal,
-        bounded_reserve_floor_gal,
-    )
-    reserve_margin_gal = fuel_at_dest - required_landing_fuel_gal
-    if reserve_margin_gal < 0:
-        fuel_status = "Below reserve"
-    elif bounded_reserve_floor_gal > max(calculated_required_landing_fuel_gal, bounded_landing_minimum_gal):
-        fuel_status = "Meets pilot floor"
-    elif bounded_landing_minimum_gal > calculated_required_landing_fuel_gal:
-        fuel_status = "Meets landing minimum"
-    else:
-        fuel_status = "Meets reserve"
     eta_dt = departure_dt + dt.timedelta(hours=profile.total_hours)
     eta_departure_zone = _format_time_12h(eta_dt.astimezone(departure_dt.tzinfo))
     eta_arrival_zone = _format_time_12h(eta_dt.astimezone(destination_tz))
@@ -5365,17 +5445,18 @@ def _flight_level_point(
         ete=f"{displayed_ete_minutes // 60}h {displayed_ete_minutes % 60}m",
         eta_arrival_zone=eta_arrival_zone,
         eta_departure_zone=eta_departure_zone,
-        fuel_burn=fuel_burn,
-        fuel_at_dest=fuel_at_dest,
+        fuel_burn=ledger.total_burn_gal,
+        fuel_at_dest=ledger.fob_at_landing_gal,
         airborne_hours=profile.total_hours,
-        alternate_fuel_gal=alternate_fuel_gal,
-        reserve_fuel_gal=reserve_fuel_gal,
-        calculated_required_landing_fuel_gal=calculated_required_landing_fuel_gal,
-        reserve_floor_gal=bounded_reserve_floor_gal,
-        required_landing_fuel_gal=required_landing_fuel_gal,
-        reserve_margin_gal=reserve_margin_gal,
-        fuel_status=fuel_status,
+        alternate_fuel_gal=ledger.alternate_fuel_gal,
+        reserve_fuel_gal=ledger.reserve_fuel_gal,
+        calculated_required_landing_fuel_gal=ledger.alternate_plus_reserve_gal,
+        reserve_floor_gal=ledger.pilot_floor_gal,
+        required_landing_fuel_gal=ledger.effective_requirement_gal,
+        reserve_margin_gal=ledger.reserve_margin_gal,
+        fuel_status=ledger.fuel_status,
         performance_limit_notes=profile.performance_limit_notes,
+        fuel_ledger=ledger,
     )
     return point, profile.avg_wind
 

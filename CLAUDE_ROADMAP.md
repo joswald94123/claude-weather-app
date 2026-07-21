@@ -53,9 +53,12 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
    no-UI-arithmetic rule is written into AGENTS.md. Deferred: an AppTest
    asserting rendered values equal core-document fields — needs the feed-
    fixture infrastructure (item 4) to drive a full mission headlessly.
-2. `FuelLedger` typed value object carrying the full fuel derivation
-   (start → taxi → phases → FOB → requirement components → margin) consumed by
-   every fuel surface.
+2. DONE (v.31) `FuelLedger`: frozen value object carrying the full derivation
+   (start → taxi/climb/cruise/descent → ceiled burn → FOB → alternate/reserve/
+   minimum/floor → effective requirement → margin → status), built once in
+   `build_fuel_ledger`; every MissionPoint fuel field is a projection of it,
+   invariant-tested, asserted per leg in the multi-leg golden test, and the
+   fuel-audit caption now shows the burn composition.
 3. `MissionBriefDocument`: one immutable computed document per run (all legs,
    FLs, hazards, provenance); enables a printable nav log.
 4. Feed adapters with recorded live-response fixtures and contract tests.
