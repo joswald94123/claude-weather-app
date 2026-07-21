@@ -66,10 +66,24 @@ def build_snapshot(*, output_path: Path, reference_date: dt.date) -> None:
     """Write complete current and preview FAA cycles for offline date-aware lookup."""
 
     candidate_dates = (reference_date, reference_date + dt.timedelta(days=28))
-    cycles_by_date = {
-        cycle.effective_date.isoformat(): cycle
-        for cycle in (get_faa_cycle_urls(reference_date=date) for date in candidate_dates)
-    }
+    # A partial FAA outage (e.g. the preview page missing its CSV anchors) must
+    # not abort the refresh: skip that candidate and retain previously captured
+    # data for it, requiring at least one live cycle overall.
+    cycles_by_date: dict[str, FaaCycleUrls] = {}
+    resolution_failures: list[str] = []
+    for candidate_date in candidate_dates:
+        try:
+            cycle = get_faa_cycle_urls(reference_date=candidate_date)
+        except (RuntimeError, OSError, ValueError) as exc:
+            resolution_failures.append(f"{candidate_date.isoformat()}: {exc}")
+            continue
+        cycles_by_date[cycle.effective_date.isoformat()] = cycle
+    if not cycles_by_date:
+        raise RuntimeError(
+            "No FAA NASR cycle could be resolved: " + "; ".join(resolution_failures)
+        )
+    for failure in resolution_failures:
+        print(f"Skipping unavailable FAA cycle ({failure}); retaining previously captured data.")
     existing_cycles_by_date: dict[str, dict[str, object]] = {}
     if output_path.exists():
         try:
@@ -100,8 +114,17 @@ def build_snapshot(*, output_path: Path, reference_date: dt.date) -> None:
     # the current cycle while this refresh runs; newly downloaded cycles win.
     encoded_by_date = dict(existing_cycles_by_date)
     for cycle in cycles_by_date.values():
-        encoded = _encoded_cycle(cycle)
+        try:
+            encoded = _encoded_cycle(cycle)
+        except (RuntimeError, OSError, ValueError) as exc:
+            print(
+                f"Skipping cycle {cycle.effective_date.isoformat()} ({exc}); "
+                "retaining previously captured data."
+            )
+            continue
         encoded_by_date[str(encoded["effective_date"])] = encoded
+    if not encoded_by_date:
+        raise RuntimeError("Refusing to write an empty FAA NASR fallback snapshot.")
 
     ordered_dates = sorted(encoded_by_date)
     current_dates = [date for date in ordered_dates if dt.date.fromisoformat(date) <= reference_date]
