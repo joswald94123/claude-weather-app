@@ -4794,7 +4794,10 @@ def _integrate_vertical_phase(
         default_crosswind_kts=default_crosswind_kts,
         wind_model=wind_model,
         sample_position=route_sample,
-        integrate_high_to_low=integrate_from_destination,
+        # Bands must ascend so `traversed` accumulates from the destination end of the
+        # route: pairing high-first ordering with the from-destination position formula
+        # mirrors the descent geography (touchdown winds sampled at TOD and vice versa).
+        integrate_high_to_low=False,
         prefer_nominal_ias_tas=prefer_nominal_ias_tas,
     )
 

@@ -9,6 +9,7 @@ import weather_core
 from performance_profiles import (
     DEFAULT_CRUISE_MODE_ID,
     DEFAULT_PERFORMANCE_PROFILE_ID,
+    VerticalPerformanceRow,
     get_performance_profile,
     sample_cruise_performance,
 )
@@ -2392,3 +2393,65 @@ def test_evaluate_route_hazards_samples_across_segment_not_only_midpoint():
 
     impacted_segments = [row.segment_index for row in rows if row.convective_score > 0]
     assert impacted_segments == [1]
+
+
+def test_descent_bands_sample_touchdown_winds_at_destination_not_tod(monkeypatch):
+    """Verify descent wind sampling pairs low bands with the destination end of the route."""
+
+    samples: list[tuple[float, float]] = []
+
+    def record_wind_sample(*, wind_model, sample_latitude, sample_longitude, altitude_ft, track_deg):
+        samples.append((float(altitude_ft), float(sample_latitude)))
+        return (0.0, 0.0)
+
+    monkeypatch.setattr(weather_core, "_sample_wind_components_from_model", record_wind_sample)
+    monkeypatch.setattr(weather_core, "_sample_temperature_from_model", lambda **_kwargs: None)
+
+    def descent_band(low_ft: int, high_ft: int) -> VerticalPerformanceRow:
+        return VerticalPerformanceRow(
+            start_altitude_ft=low_ft,
+            end_altitude_ft=high_ft,
+            ias_kts=230,
+            rate_fpm=1500,
+            fuel_gph=40.0,
+        )
+
+    rows = (
+        descent_band(0, 8000),
+        descent_band(8000, 16000),
+        descent_band(16000, 24000),
+        descent_band(24000, 31000),
+    )
+    model = weather_core.RouteWindModel(
+        segment_tailwind_by_fl={},
+        climb_tailwind_by_fl={},
+        descent_tailwind_by_fl={},
+        station_profiles=((40.0, -100.0, {30000: (0.0, 0.0)}),),
+    )
+
+    weather_core._integrate_vertical_phase(
+        lower_altitude_ft=0.0,
+        upper_altitude_ft=31000.0,
+        rows=rows,
+        fallback_ias_kts=230,
+        fallback_rate_fpm=1500,
+        fallback_fuel_gph=57.0,
+        default_tailwind_kts=0.0,
+        default_crosswind_kts=0.0,
+        departure_latitude=30.0,
+        departure_longitude=-100.0,
+        destination_latitude=40.0,
+        destination_longitude=-100.0,
+        mission_distance_nm=600.0,
+        track_deg=0.0,
+        wind_model=model,
+        integrate_from_destination=True,
+    )
+
+    assert samples
+    lowest_band = min(samples, key=lambda item: item[0])
+    highest_band = max(samples, key=lambda item: item[0])
+    # Northbound route: the touchdown band must sample at the destination (higher
+    # latitude) and the top-of-descent band farther back along the route.
+    assert lowest_band[1] > highest_band[1]
+    assert lowest_band[1] == pytest.approx(40.0, abs=0.2)
