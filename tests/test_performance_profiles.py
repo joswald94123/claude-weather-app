@@ -168,3 +168,34 @@ def test_sample_descent_rows_supports_exact_rate_selection():
     assert rows[0].ias_kts == 220
     assert rows[0].rate_fpm == 2000
     assert rows[0].notes == "Table 5.12.1 | 2,000 fpm"
+
+
+def test_empty_inputs_raise_instead_of_returning_sentinels():
+    """Verify empty tables fail loudly rather than yielding zero performance."""
+
+    import performance_profiles
+
+    with pytest.raises(ValueError, match="No cruise rows"):
+        performance_profiles._sample_cruise_row((), flight_level=300)
+    with pytest.raises(ValueError, match="No table keys"):
+        performance_profiles._nearest_bounds((), 1500.0)
+
+
+def test_composite_climb_clipped_bands_null_stale_cumulative_fields():
+    """Verify a clipped transition band cannot leak its parent band's time/distance."""
+
+    profile = get_performance_profile(DEFAULT_PERFORMANCE_PROFILE_ID)
+    rows = sample_composite_climb_rows(
+        profile,
+        lower_schedule_id="124_kias",
+        upper_schedule_id="170_kias_m0_40",
+        transition_altitude_ft=9000,
+    )
+
+    clipped = [
+        row
+        for row in rows
+        if row.end_altitude_ft == 9000 or row.start_altitude_ft == 9000
+    ]
+    assert clipped
+    assert all(row.time_minutes is None and row.distance_nm is None for row in clipped)

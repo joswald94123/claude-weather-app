@@ -123,6 +123,30 @@ _CLIMB_PAGE_MAP = {
 }
 _DESCENT_PAGE_MAP = {"230_kcas": 559}
 
+
+def _assert_metadata_page_alignment() -> None:
+    """Fail at import when the hand-maintained metadata and page maps drift apart."""
+
+    mismatches: list[str] = []
+    for label, metadata, page_map in (
+        ("cruise", CRUISE_MODE_METADATA, _CRUISE_PAGE_MAP),
+        ("climb", CLIMB_SCHEDULE_METADATA, _CLIMB_PAGE_MAP),
+        ("descent", DESCENT_PROFILE_METADATA, _DESCENT_PAGE_MAP),
+    ):
+        if set(metadata) != set(page_map):
+            mismatches.append(f"{label} ids {sorted(metadata)} vs pages {sorted(page_map)}")
+            continue
+        for key, entry in metadata.items():
+            temps = entry.get("table_references_by_temp_delta_c")
+            pages = page_map.get(key)
+            if isinstance(temps, dict) and isinstance(pages, dict) and set(temps) != set(pages):
+                mismatches.append(f"{label} '{key}' temps {sorted(temps)} vs pages {sorted(pages)}")
+    if mismatches:
+        raise RuntimeError("Daher PIM metadata/page maps drifted: " + "; ".join(mismatches))
+
+
+_assert_metadata_page_alignment()
+
 _CRUISE_LINE_RE = re.compile(
     r"^(?P<alt>SL|\d{1,2},\d{3})\s+(?P<oat>-?\d+)\s+(?P<trq>\d+)\s+(?P<fuel>[\d.]+)"
     r"\s+(?P<w1_ias>\d+)\s+(?P<w1_tas>\d+)\s+(?P<w2_ias>\d+)\s+(?P<w2_tas>\d+)"

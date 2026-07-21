@@ -2763,3 +2763,34 @@ def test_windtemp_cycle_correction_requires_product_issue_time():
     )
 
     assert correction is None
+
+
+def test_gairmet_iso_valid_time_builds_the_snapshot_window():
+    """Verify the live-data ISO validTime shape drives the snapshot validity window."""
+
+    areas = _parse_hazard_areas(
+        gairmet_rows=[
+            {
+                "hazard": "TURB-HI",
+                "validTime": "2026-07-20T18:00:00Z",
+                "forecastHour": 3,
+                "issueTime": "2026-07-20T14:45:00Z",
+                "base": "240",
+                "top": "360",
+                "coords": [
+                    {"lat": 38.0, "lon": -123.0},
+                    {"lat": 39.0, "lon": -123.0},
+                    {"lat": 39.0, "lon": -122.0},
+                ],
+            }
+        ],
+        airsigmet_rows=[],
+        tcf_payload={},
+        cwa_payload={},
+        pirep_rows=[],
+    )
+
+    snapshot = dt.datetime(2026, 7, 20, 18, 0, tzinfo=dt.timezone.utc)
+    assert len(areas) == 1
+    assert areas[0].valid_from_utc == snapshot - weather_core.GAIRMET_SNAPSHOT_HALF_WINDOW
+    assert areas[0].valid_to_utc == snapshot + weather_core.GAIRMET_SNAPSHOT_HALF_WINDOW

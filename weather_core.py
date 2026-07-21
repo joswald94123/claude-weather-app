@@ -16,6 +16,7 @@ import requests
 
 from performance_profiles import (
     AircraftPerformanceProfile,
+    MIN_PLANNING_RATE_FPM,
     VerticalPerformanceRow,
     sample_climb_rows,
     sample_composite_climb_rows,
@@ -2285,7 +2286,7 @@ def _integrate_vertical_bands(
         midpoint_altitude_ft = (band_low_ft + band_high_ft) / 2.0
         row = _vertical_row_for_altitude(rows, midpoint_altitude_ft)
         ias_kts = float(row.ias_kts if row else fallback_ias_kts)
-        rate_fpm = max(int(row.rate_fpm if row else fallback_rate_fpm), 100)
+        rate_fpm = max(int(row.rate_fpm if row else fallback_rate_fpm), MIN_PLANNING_RATE_FPM)
         fuel_gph = float(row.fuel_gph if row else fallback_fuel_gph)
         tas_kts = (
             _ias_to_tas(ias_kts, midpoint_altitude_ft)
@@ -4794,51 +4795,21 @@ def _phase_performance(
 ) -> tuple[float, float, float]:
     """Integrate one vertical phase when only a single representative wind is available."""
 
-    low_ft = min(lower_altitude_ft, upper_altitude_ft)
-    high_ft = max(lower_altitude_ft, upper_altitude_ft)
-    if high_ft <= low_ft:
-        return 0.0, 0.0, 0.0
-
-    ordered_boundaries_ft = _phase_altitude_boundaries_ft(
+    hours, distance_nm, fuel_gal, _average_tailwind = _integrate_vertical_bands(
         lower_altitude_ft=lower_altitude_ft,
         upper_altitude_ft=upper_altitude_ft,
         rows=rows,
+        fallback_ias_kts=fallback_ias_kts,
+        fallback_rate_fpm=fallback_rate_fpm,
+        fallback_fuel_gph=fallback_fuel_gph,
+        default_tailwind_kts=wind_kt,
+        default_crosswind_kts=crosswind_kt,
+        # No model means the sampler is never invoked; the constant winds apply.
+        wind_model=None,
+        sample_position=lambda traversed_nm, band_distance_nm: (0.0, 0.0, 0.0),
+        prefer_nominal_ias_tas=prefer_nominal_ias_tas,
     )
-    total_hours = 0.0
-    total_distance_nm = 0.0
-    total_fuel_gal = 0.0
-
-    for segment_low_ft, segment_high_ft in zip(ordered_boundaries_ft, ordered_boundaries_ft[1:]):
-        if segment_high_ft <= segment_low_ft:
-            continue
-
-        midpoint_altitude_ft = (segment_low_ft + segment_high_ft) / 2.0
-        row = _vertical_row_for_altitude(rows, midpoint_altitude_ft)
-        ias_kts = float(row.ias_kts if row else fallback_ias_kts)
-        rate_fpm = max(int(row.rate_fpm if row else fallback_rate_fpm), 100)
-        fuel_gph = float(row.fuel_gph if row else fallback_fuel_gph)
-        tas_kts = (
-            _ias_to_tas(ias_kts, midpoint_altitude_ft)
-            if prefer_nominal_ias_tas
-            else (
-                float(row.tas_kts)
-                if row and row.tas_kts is not None
-                else _ias_to_tas(ias_kts, midpoint_altitude_ft)
-            )
-        )
-
-        segment_hours = (segment_high_ft - segment_low_ft) / rate_fpm / 60.0
-        segment_ground_speed = _along_track_ground_speed(
-            true_airspeed_kts=tas_kts,
-            tailwind_kts=wind_kt,
-            crosswind_kts=crosswind_kt,
-            vertical_rate_fpm=rate_fpm,
-        )
-        total_hours += segment_hours
-        total_distance_nm += segment_hours * segment_ground_speed
-        total_fuel_gal += segment_hours * fuel_gph
-
-    return total_hours, total_distance_nm, total_fuel_gal
+    return hours, distance_nm, fuel_gal
 
 
 def _integrate_vertical_phase(

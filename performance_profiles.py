@@ -28,6 +28,9 @@ DEFAULT_STARTUP_TAXI_FUEL_GAL = 8.0
 DEFAULT_CRUISE_WEIGHT_LB = 7100
 DEFAULT_CLIMB_WEIGHT_LB = 7394
 NORMAL_CRUISE_MIN_FL = 180
+# Keeps band_hours = altitude_delta / rate finite; real PIM band rates are always
+# several hundred fpm, so this floor never binds on published data.
+MIN_PLANNING_RATE_FPM = 100
 
 
 # These data models preserve the official table families while keeping sampling call sites simple.
@@ -185,7 +188,7 @@ def _nearest_bounds(values: tuple[int, ...], target: float) -> tuple[int, int, f
     """Return bracketing table keys and the clamped target used for interpolation."""
 
     if not values:
-        return 0, 0, 0.0
+        raise ValueError(f"No table keys available to bracket interpolation target {target}.")
 
     ordered_values = tuple(sorted(values))
     for value in ordered_values:
@@ -212,7 +215,7 @@ def _sample_cruise_row(
 
     ordered_rows = tuple(sorted(rows, key=lambda row: row.flight_level))
     if not ordered_rows:
-        return CruisePerformanceRow(flight_level=flight_level, tas_kts=0.0, fuel_gph=0.0)
+        raise ValueError(f"No cruise rows available to sample FL{flight_level}.")
 
     if flight_level <= ordered_rows[0].flight_level:
         return ordered_rows[0]
@@ -585,7 +588,7 @@ def _build_vertical_rows_from_cumulative_table(
                 f"{start_altitude_ft}-{end_altitude_ft} ft band."
             )
 
-        rate_fpm = max(int(round(altitude_delta_ft / time_minutes)), 100)
+        rate_fpm = max(int(round(altitude_delta_ft / time_minutes)), MIN_PLANNING_RATE_FPM)
         fuel_gph = fuel_used_gal / (time_minutes / 60.0)
         tas_kts = _segment_speed_kts(
             distance_nm=distance_nm,
@@ -1069,14 +1072,26 @@ def sample_composite_climb_rows(
     transition_ft = float(transition_altitude_ft)
     composite: list[VerticalPerformanceRow] = []
 
+    # A clipped band's cumulative time/distance still describe the full parent band,
+    # so they are nulled rather than left to double-count in any future consumer.
     for row in lower_rows:
         if row.start_altitude_ft >= transition_ft:
             continue
-        composite.append(replace(row, end_altitude_ft=int(min(row.end_altitude_ft, transition_ft))))
+        clipped_end_ft = int(min(row.end_altitude_ft, transition_ft))
+        composite.append(
+            row
+            if clipped_end_ft == row.end_altitude_ft
+            else replace(row, end_altitude_ft=clipped_end_ft, time_minutes=None, distance_nm=None)
+        )
     for row in upper_rows:
         if row.end_altitude_ft <= transition_ft:
             continue
-        composite.append(replace(row, start_altitude_ft=int(max(row.start_altitude_ft, transition_ft))))
+        clipped_start_ft = int(max(row.start_altitude_ft, transition_ft))
+        composite.append(
+            row
+            if clipped_start_ft == row.start_altitude_ft
+            else replace(row, start_altitude_ft=clipped_start_ft, time_minutes=None, distance_nm=None)
+        )
 
     usable_rows = [row for row in composite if row.end_altitude_ft > row.start_altitude_ft]
     return tuple(sorted(usable_rows, key=lambda row: (row.start_altitude_ft, row.end_altitude_ft)))

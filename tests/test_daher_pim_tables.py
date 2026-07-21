@@ -97,3 +97,32 @@ def test_descent_parser_preserves_all_published_rate_columns():
     assert tuple(sorted(rows[0].profiles_by_rate_fpm)) == DESCENT_RATES_FPM
     assert descent_rows_for_rate("230_kcas", 1500)[0]["pressure_altitude_ft"] == 31000
     assert descent_rows_for_rate("230_kcas", 2500)[0]["distance_nm"] == 60.0
+
+
+def test_metadata_page_map_drift_fails_loudly(monkeypatch):
+    """Verify the hand-maintained metadata and page maps cannot silently diverge."""
+
+    broken = dict(daher_pim_tables._CRUISE_PAGE_MAP)
+    broken.pop("economy")
+    monkeypatch.setattr(daher_pim_tables, "_CRUISE_PAGE_MAP", broken)
+
+    with pytest.raises(RuntimeError, match="drifted"):
+        daher_pim_tables._assert_metadata_page_alignment()
+
+
+def test_snapshot_check_script_passes_for_the_shipped_snapshot():
+    """Verify the release gate script accepts the checked-in snapshot end to end."""
+
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(daher_pim_tables.__file__).resolve().parent / "scripts" / "build_pim_snapshot.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--check"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
