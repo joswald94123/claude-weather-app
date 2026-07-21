@@ -300,13 +300,6 @@ def _page_lines(page_number: int) -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=None)
-def list_available_cruise_modes() -> tuple[str, ...]:
-    """Return cruise-mode IDs that have source pages in the PIM parser."""
-
-    return tuple(_CRUISE_PAGE_MAP.keys())
-
-
-@lru_cache(maxsize=None)
 def list_available_cruise_temperature_offsets(mode_id: str) -> tuple[int, ...]:
     """Return ISA-offset slices available for one cruise mode."""
 
@@ -314,24 +307,10 @@ def list_available_cruise_temperature_offsets(mode_id: str) -> tuple[int, ...]:
 
 
 @lru_cache(maxsize=None)
-def list_available_climb_schedules() -> tuple[str, ...]:
-    """Return climb-schedule IDs that have source pages in the PIM parser."""
-
-    return tuple(_CLIMB_PAGE_MAP.keys())
-
-
-@lru_cache(maxsize=None)
 def list_available_climb_temperature_offsets(schedule_id: str) -> tuple[int, ...]:
     """Return ISA-offset slices available for one climb schedule."""
 
     return tuple(sorted(_CLIMB_PAGE_MAP.get(schedule_id, {}).keys()))
-
-
-@lru_cache(maxsize=None)
-def list_available_descent_profiles() -> tuple[str, ...]:
-    """Return descent-profile IDs that have source pages in the PIM parser."""
-
-    return tuple(_DESCENT_PAGE_MAP.keys())
 
 
 @lru_cache(maxsize=None)

@@ -19,6 +19,7 @@ from performance_profiles import (
     AircraftPerformanceProfile,
     MIN_PLANNING_RATE_FPM,
     VerticalPerformanceRow,
+    _interpolate_scalar,
     sample_climb_rows,
     sample_composite_climb_rows,
     sample_cruise_performance,
@@ -30,7 +31,6 @@ from route_planning import (
     RoutePlan,
     RouteWaypoint,
     build_route_plan as _route_plan_between_airports,
-    chain_multi_leg_timings,
     great_circle_distance_nm as _route_great_circle_distance_nm,
     initial_track_deg as _route_initial_track_deg,
     resolve_fuel_stop_leg_policy,
@@ -41,8 +41,6 @@ from route_planning import (
     split_route_plan_at_fuel_stops,
 )
 
-DEFAULT_LAT = 39.8283
-DEFAULT_LON = -98.5795
 DEFAULT_TZ = "US/Central"
 
 FLIGHT_LEVELS = [190, 200, 210, 220, 230, 240, 250, 260, 270, 280, 290, 300, 310]
@@ -66,10 +64,8 @@ WIND_COVERAGE_PROBE_ALTITUDE_FT = 30000.0
 IDW_DISTANCE_SOFTENING_NM = 20.0
 IDW_MAX_STATIONS = 4
 ALTERNATE_DIVERSION_FLIGHT_LEVEL = 100
-TRUE_AIRSPEED_KTS = 330.0
 FUEL_BURN_GPH = 57.0
 FIXED_FUEL_GAL = 8
-CLIMB_DESCENT_AIRSPEED_KTS = 220.0
 FEET_PER_NAUTICAL_MILE = 6076.12
 NOAA_API_BASE_URL = "https://aviationweather.gov/api/data"
 WINDTEMP_TOKEN_PATTERN = re.compile(r"^(?P<dd>\d{2})(?P<ff>\d{2})(?P<tt>[+-]\d{2}|\d{2})?$")
@@ -206,7 +202,6 @@ class MissionBrief:
     departure_zone_time: str
     distance_nm: int
     direction_label: str
-    baseline_wind_knots: int
     points: list[MissionPoint]
 
 
@@ -429,9 +424,6 @@ class RouteWindModel:
 class FlightLevelProfile:
     """Integrated climb, cruise, and descent performance for one flight level."""
 
-    segment_winds: list[float]
-    climb_wind: float
-    descent_wind: float
     climb_hours: float
     descent_hours: float
     climb_distance_nm: float
@@ -545,22 +537,6 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
-def _interpolate_scalar(
-    value_low: float,
-    value_high: float,
-    *,
-    x_low: float,
-    x_high: float,
-    x_target: float,
-) -> float:
-    """Linearly interpolate one scalar value between two sample points."""
-
-    if x_high == x_low:
-        return value_low
-    ratio = (x_target - x_low) / (x_high - x_low)
-    return value_low + ((value_high - value_low) * ratio)
-
-
 def _format_local_with_zulu(
     stamp_utc: dt.datetime,
     *,
@@ -632,12 +608,6 @@ def _summarize_wind(
     if gust is not None and gust > speed_part:
         text += f", gusting {gust} kt"
     return text
-
-
-def _score_label(score: int) -> str:
-    """Translate a numeric terminal-weather score into a human label."""
-
-    return RISK_LABEL_BY_SCORE.get(int(max(0, min(3, score))), "None")
 
 
 def _parse_visibility_sm(value: object) -> float | None:
@@ -830,7 +800,7 @@ def _terminal_risk_from_fields(
     if taf_period is not None:
         scores.append(_llws_risk(taf_period, reasons))
     score = max(scores) if scores else 0
-    return TerminalRisk(source=source, score=score, label=_score_label(score), reasons=tuple(reasons))
+    return TerminalRisk(source=source, score=score, label=hazard_label(score), reasons=tuple(reasons))
 
 
 def _terminal_risk_from_metar_row(row: dict[str, object]) -> TerminalRisk | None:
@@ -882,7 +852,7 @@ def _terminal_risk_from_taf_row(row: dict[str, object]) -> TerminalRisk | None:
     for risk in period_risks:
         if risk.score == max_score:
             reasons.extend(reason for reason in risk.reasons if reason not in reasons)
-    return TerminalRisk(source="TAF", score=max_score, label=_score_label(max_score), reasons=tuple(reasons))
+    return TerminalRisk(source="TAF", score=max_score, label=hazard_label(max_score), reasons=tuple(reasons))
 
 
 def _taf_period_from_dict(period: dict[str, object]) -> TerminalForecastPeriod:
@@ -5302,9 +5272,6 @@ def _flight_level_profile(
     avg_wind = int(weighted_wind / total_hours) if total_hours > 0 else 0
     total_fuel_gal = climb_fuel_gal + descent_fuel_gal + cruise_fuel_gal + fixed_fuel_gal
     return FlightLevelProfile(
-        segment_winds=segment_winds,
-        climb_wind=climb_wind,
-        descent_wind=descent_wind,
         climb_hours=climb_hours,
         descent_hours=descent_hours,
         climb_distance_nm=climb_distance_nm,
@@ -5533,9 +5500,7 @@ def build_mission_brief(
 
     points: list[MissionPoint] = []
     numeric_average_winds_kts: list[float] = []
-    baseline_wind_knots = 0
     active_flight_levels = list(flight_levels or FLIGHT_LEVELS)
-    baseline_level = 280 if 280 in active_flight_levels else active_flight_levels[len(active_flight_levels) // 2]
 
     for fl in active_flight_levels:
         point, avg_wind = _flight_level_point(
@@ -5576,8 +5541,6 @@ def build_mission_brief(
         )
         points.append(point)
         numeric_average_winds_kts.append(float(avg_wind))
-        if fl == baseline_level:
-            baseline_wind_knots = avg_wind
 
     # The parenthetical must reflect the computed winds, not the route direction:
     # easterly winds aloft make an eastbound leg a headwind mission.
@@ -5599,7 +5562,6 @@ def build_mission_brief(
         departure_zone_time=_format_time_12h(departure_dt),
         distance_nm=int(distance_nm),
         direction_label=f"{direction} ({wind_type})",
-        baseline_wind_knots=baseline_wind_knots,
         points=points,
     )
 
@@ -5776,14 +5738,13 @@ def build_multi_leg_plan(
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError(f"Leg {leg_number} mission calculations failed: {exc}") from exc
         leg_point = leg_brief.points[0]
-        try:
-            leg_timing = chain_multi_leg_timings(
-                current_departure_dt,
-                [float(leg_point.airborne_hours)],
-            )[0]
-        except ValueError as exc:
-            raise ValueError(f"Leg {leg_number} timing could not be chained: {exc}") from exc
-        arrival_utc = leg_timing.arrival.astimezone(dt.timezone.utc)
+        leg_airborne_hours = float(leg_point.airborne_hours)
+        if not math.isfinite(leg_airborne_hours) or leg_airborne_hours < 0.0:
+            raise ValueError(
+                f"Leg {leg_number} timing could not be chained: airborne hours {leg_airborne_hours!r}"
+            )
+        leg_arrival_dt = current_departure_dt + dt.timedelta(hours=leg_airborne_hours)
+        arrival_utc = leg_arrival_dt.astimezone(dt.timezone.utc)
         if is_final_leg:
             final_arrival_utc = arrival_utc
 
@@ -5859,7 +5820,7 @@ def build_multi_leg_plan(
         )
         leg_margins.append((f"Leg {leg_number}", int(leg_point.reserve_margin_gal)))
         leg_arrival_fuels.append(float(leg_point.fuel_at_dest))
-        current_departure_dt = leg_timing.arrival + dt.timedelta(minutes=float(ground_minutes))
+        current_departure_dt = leg_arrival_dt + dt.timedelta(minutes=float(ground_minutes))
         current_start_fuel = handoff_policy.next_start_fuel_gal
 
     return MultiLegPlan(

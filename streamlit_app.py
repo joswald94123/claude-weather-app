@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime as dt
 import html
 import importlib
-import inspect
 import math
 import os
 import re
@@ -86,7 +85,6 @@ from weather_core import (  # noqa: E402
     FLIGHT_LEVELS,
     MissionRiskThresholds,
     build_alternate_range_rings,
-    build_mission_brief,
     build_mission_brief_document,
     build_route_vertical_profile,
     cruise_flight_levels_for_direction,
@@ -107,7 +105,6 @@ from weather_core import (  # noqa: E402
 # module that predates exports required by this release; normal reruns and clean
 # starts leave the already-current module untouched.
 _REQUIRED_ROUTE_PLANNING_EXPORTS = {
-    "chain_multi_leg_timings",
     "destination_arrival_fuel_gal",
     "resolve_mission_headline",
 }
@@ -123,43 +120,17 @@ if not _REQUIRED_ROUTE_VERTICAL_PROFILE_EXPORTS.issubset(vars(_route_vertical_pr
 
 # Bind route-planning names only after the compatibility refresh so an in-process
 # deployment cannot fail while resolving a newly introduced module export.
-RouteFuelSegment = _route_planning.RouteFuelSegment
 RoutePlan = _route_planning.RoutePlan
 RouteWaypoint = _route_planning.RouteWaypoint
 build_route_plan = _route_planning.build_route_plan
-chain_multi_leg_timings = _route_planning.chain_multi_leg_timings
 destination_arrival_fuel_gal = _route_planning.destination_arrival_fuel_gal
-resolve_mission_headline = _route_planning.resolve_mission_headline
 parse_airborne_ete = _route_planning.parse_airborne_ete
 normalize_route_tokens = _route_planning.normalize_route_tokens
 route_progress_warning = _route_planning.route_progress_warning
-resolve_fuel_stop_leg_policy = _route_planning.resolve_fuel_stop_leg_policy
-split_route_plan_at_fuel_stops = _route_planning.split_route_plan_at_fuel_stops
 build_interactive_route_vertical_profile_html = (
     _route_vertical_profile.build_interactive_route_vertical_profile_html
 )
 build_route_vertical_profile_svg = _route_vertical_profile.build_route_vertical_profile_svg
-
-try:
-    from weather_core import build_route_wind_model
-except Exception:
-    # Older runtimes may not yet expose the NOAA wind-model builder; keep the UI bootable.
-    def build_route_wind_model(
-        departure_airport: AirportData,
-        destination_airport: AirportData,
-        windtemps: list[object],
-        route_plan: object | None = None,
-    ):
-        """Fallback no-op wind model builder for older deployed weather_core versions."""
-
-        return None
-
-_BUILD_MISSION_BRIEF_PARAMS = set(inspect.signature(build_mission_brief).parameters.keys())
-_SUPPORTS_EXTENDED_PERF_INPUTS = {
-    "cruise_tas_kts",
-    "climb_ias_kts",
-    "descent_ias_kts",
-}.issubset(_BUILD_MISSION_BRIEF_PARAMS)
 
 
 @dataclass(frozen=True)
@@ -1359,12 +1330,6 @@ with st.sidebar:
         route_sources = [str(waypoint.source) for waypoint in route_plan.waypoints]
         faa_source_label = "offline snapshot" if any("offline snapshot" in source for source in route_sources) else "live"
         st.caption(f"FAA {faa_source_label} waypoint cycle: {faa_cycle_label}")
-    if not _SUPPORTS_EXTENDED_PERF_INPUTS:
-        st.error(
-            "Runtime is missing required performance-model parameters. "
-            "Reboot/redeploy this app and retry."
-        )
-        st.stop()
 
     available_flight_levels = _sync_cruise_selection(departure_airport, destination_airport)
 
@@ -1924,33 +1889,25 @@ with st.spinner("Recalculating..."):
     mission_weather_airports.discard(destination_airport.icao)
     if alternate_airport is not None:
         mission_weather_airports.discard(alternate_airport.icao)
-    weather = _cached_noaa_weather(
-        departure_airport.icao,
-        destination_airport.icao,
-        alternate_airport.icao if alternate_airport is not None else "",
-        ",".join(sorted(mission_weather_airports)),
-        windtemp_region,
-        windtemp_level,
-        windtemp_fcst,
-        departure_date.isoformat(),
-        departure_time.strftime("%H:%M"),
-        _APP_RELEASE,
-    )
+    def _fetch_mission_weather(fcst_cycle: str):
+        return _cached_noaa_weather(
+            departure_airport.icao,
+            destination_airport.icao,
+            alternate_airport.icao if alternate_airport is not None else "",
+            ",".join(sorted(mission_weather_airports)),
+            windtemp_region,
+            windtemp_level,
+            fcst_cycle,
+            departure_date.isoformat(),
+            departure_time.strftime("%H:%M"),
+            _APP_RELEASE,
+        )
+
+    weather = _fetch_mission_weather(windtemp_fcst)
     corrected_windtemp_fcst = windtemp_cycle_correction(weather, selected_etd.astimezone(dt.timezone.utc))
     if corrected_windtemp_fcst is not None and corrected_windtemp_fcst != windtemp_fcst:
         windtemp_fcst = corrected_windtemp_fcst
-        weather = _cached_noaa_weather(
-                departure_airport.icao,
-                destination_airport.icao,
-                alternate_airport.icao if alternate_airport is not None else "",
-                ",".join(sorted(mission_weather_airports)),
-                windtemp_region,
-                windtemp_level,
-                windtemp_fcst,
-                departure_date.isoformat(),
-                departure_time.strftime("%H:%M"),
-                _APP_RELEASE,
-            )
+        weather = _fetch_mission_weather(windtemp_fcst)
     # The mission is computed as one immutable document; everything below renders
     # its fields and performs no mission arithmetic of its own.
     mission_performance_kwargs = dict(

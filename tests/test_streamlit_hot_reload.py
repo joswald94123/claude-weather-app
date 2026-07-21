@@ -10,14 +10,14 @@ from streamlit.testing.v1 import AppTest
 def test_app_refreshes_stale_route_planning_module(monkeypatch):
     """Recover when Community Cloud retains a route module from before deployment."""
 
-    monkeypatch.delattr(route_planning, "chain_multi_leg_timings")
+    monkeypatch.delattr(route_planning, "resolve_mission_headline")
     monkeypatch.delattr(route_planning, "destination_arrival_fuel_gal")
 
     app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
     app = AppTest.from_file(str(app_path)).run(timeout=60)
 
     assert not app.exception
-    assert hasattr(route_planning, "chain_multi_leg_timings")
+    assert hasattr(route_planning, "resolve_mission_headline")
     assert hasattr(route_planning, "destination_arrival_fuel_gal")
 
 

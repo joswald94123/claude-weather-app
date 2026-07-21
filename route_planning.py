@@ -43,7 +43,6 @@ class RoutePlan:
     total_distance_nm: float
     route_label: str
     route_text: str
-    intermediate_identifiers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -53,15 +52,6 @@ class RouteFuelSegment:
     start_identifier: str
     end_identifier: str
     route_plan: RoutePlan
-
-
-@dataclass(frozen=True)
-class MultiLegTiming:
-    """Absolute departure/arrival times for one chained mission leg."""
-
-    leg_number: int
-    departure: dt.datetime
-    arrival: dt.datetime
 
 
 @dataclass(frozen=True)
@@ -134,32 +124,6 @@ def parse_airborne_ete(ete_text: str) -> dt.timedelta:
     if minutes >= 60:
         raise ValueError(f"Invalid airborne ETE minutes: {ete_text!r}")
     return dt.timedelta(hours=int(match.group("hours")), minutes=minutes)
-
-
-def chain_multi_leg_timings(
-    initial_departure: dt.datetime,
-    airborne_etes: Sequence[str | float | dt.timedelta],
-    *,
-    ground_minutes: float = 0.0,
-) -> tuple[MultiLegTiming, ...]:
-    """Chain numeric leg durations and intervening ground time without losing timezone context."""
-
-    if initial_departure.tzinfo is None:
-        raise ValueError("initial_departure must be timezone-aware")
-    ground_time = dt.timedelta(minutes=max(float(ground_minutes), 0.0))
-    departure = initial_departure
-    timings: list[MultiLegTiming] = []
-    for leg_number, ete_value in enumerate(airborne_etes, start=1):
-        if isinstance(ete_value, dt.timedelta):
-            airborne_duration = ete_value
-        elif isinstance(ete_value, (int, float)):
-            airborne_duration = dt.timedelta(hours=max(float(ete_value), 0.0))
-        else:
-            airborne_duration = parse_airborne_ete(ete_value)
-        arrival = departure + airborne_duration
-        timings.append(MultiLegTiming(leg_number, departure, arrival))
-        departure = arrival + ground_time
-    return tuple(timings)
 
 
 def normalize_route_tokens(raw_text: str) -> list[str]:
@@ -298,7 +262,6 @@ def build_route_plan(
         total_distance_nm=total_distance_nm,
         route_label=" -> ".join(identifiers),
         route_text=" ".join(identifiers),
-        intermediate_identifiers=tuple(waypoint.identifier for waypoint in ordered_waypoints[1:-1]),
     )
 
 

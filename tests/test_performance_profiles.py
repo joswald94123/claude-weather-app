@@ -8,8 +8,6 @@ from performance_profiles import (
     DEFAULT_PERFORMANCE_PROFILE_ID,
     DEFAULT_STARTUP_TAXI_FUEL_GAL,
     get_performance_profile,
-    list_cruise_rows_for_display,
-    list_vertical_rows_for_display,
     resolve_climb_schedule,
     resolve_cruise_mode,
     resolve_descent_profile,
@@ -62,32 +60,6 @@ def test_official_pim_profile_exposes_source_table_families():
     assert descent_profile.label == "220 KIAS"
     assert descent_profile.nominal_ias_kts == 220
     assert descent_profile.available_vertical_rates_fpm == (1500, 2000, 2500)
-
-
-# Display-oriented helpers must keep rows in the order pilots expect to scan them.
-def test_cruise_rows_for_display_sort_highest_flight_level_first():
-    """Verify that cruise rows for display sort highest flight level first."""
-
-    profile = get_performance_profile(DEFAULT_PERFORMANCE_PROFILE_ID)
-
-    rows = list_cruise_rows_for_display(profile, cruise_mode_id="max")
-
-    assert rows[0].flight_level == 310
-    assert rows[-1].flight_level == 180
-
-
-def test_vertical_rows_for_display_sort_highest_altitude_band_first():
-    """Verify that vertical rows for display sort highest altitude band first."""
-
-    profile = get_performance_profile(DEFAULT_PERFORMANCE_PROFILE_ID)
-
-    climb_rows = list_vertical_rows_for_display(profile.climb_rows)
-    descent_rows = list_vertical_rows_for_display(profile.descent_rows)
-
-    assert climb_rows[0].start_altitude_ft == 30000
-    assert climb_rows[-1].start_altitude_ft == 0
-    assert descent_rows[0].start_altitude_ft == 30000
-    assert descent_rows[-1].start_altitude_ft == 0
 
 
 def test_sample_cruise_performance_interpolates_between_defined_rows_and_temps():

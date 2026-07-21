@@ -27,7 +27,6 @@ DEFAULT_DESCENT_RATE_FPM = 1500
 DEFAULT_STARTUP_TAXI_FUEL_GAL = 8.0
 DEFAULT_CRUISE_WEIGHT_LB = 7100
 DEFAULT_CLIMB_WEIGHT_LB = 7394
-NORMAL_CRUISE_MIN_FL = 180
 # Keeps band_hours = altitude_delta / rate finite; real PIM band rates are always
 # several hundred fpm, so this floor never binds on published data.
 MIN_PLANNING_RATE_FPM = 100
@@ -837,12 +836,6 @@ OFFICIAL_PIM_PROFILE = _build_official_pim_profile()
 PERFORMANCE_PROFILES = (OFFICIAL_PIM_PROFILE,)
 
 
-def list_performance_profiles() -> tuple[AircraftPerformanceProfile, ...]:
-    """Return all installed aircraft performance profiles."""
-
-    return PERFORMANCE_PROFILES
-
-
 def get_performance_profile(profile_id: str | None) -> AircraftPerformanceProfile:
     """Return a known profile, falling back to the official baseline when needed."""
 
@@ -1122,56 +1115,3 @@ def sample_descent_rows(
     )
 
 
-def list_cruise_rows_for_display(
-    profile: AircraftPerformanceProfile,
-    *,
-    cruise_mode_id: str | None = None,
-    temperature_offset_c: float | None = None,
-) -> tuple[CruisePerformanceRow, ...]:
-    """Return cruise rows in UI order, optionally after temperature interpolation."""
-
-    mode = resolve_cruise_mode(profile, cruise_mode_id)
-    if temperature_offset_c is None:
-        rows = mode.cruise_rows
-    else:
-        sample_rows = []
-        for row in sorted(mode.cruise_rows, key=lambda item: item.flight_level):
-            # Re-sample each published level so the display matches the interpolated engine output.
-            sample = sample_cruise_performance(
-                profile,
-                flight_level=row.flight_level,
-                cruise_mode_id=mode.mode_id,
-                temperature_offset_c=temperature_offset_c,
-            )
-            sample_rows.append(
-                CruisePerformanceRow(
-                    flight_level=row.flight_level,
-                    tas_kts=sample.tas_kts,
-                    fuel_gph=sample.fuel_gph,
-                    ias_kts=sample.ias_kts,
-                    torque_pct=sample.torque_pct,
-                    oat_c=sample.oat_c,
-                    temperature_offset_c=sample.temperature_offset_c,
-                    source=SOURCE_METADATA["source"],
-                    confidence="high",
-                    verified=True,
-                    notes=sample.table_reference,
-                )
-            )
-        rows = tuple(sample_rows)
-    normal_cruise_rows = [row for row in rows if row.flight_level >= NORMAL_CRUISE_MIN_FL]
-    return tuple(sorted(normal_cruise_rows, key=lambda row: row.flight_level, reverse=True))
-
-
-def list_vertical_rows_for_display(
-    rows: tuple[VerticalPerformanceRow, ...] | list[VerticalPerformanceRow],
-) -> tuple[VerticalPerformanceRow, ...]:
-    """Sort climb/descent bands from highest altitude to lowest for tabular display."""
-
-    return tuple(
-        sorted(
-            rows,
-            key=lambda row: (row.start_altitude_ft, row.end_altitude_ft),
-            reverse=True,
-        )
-    )

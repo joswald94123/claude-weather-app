@@ -1,7 +1,5 @@
 """Regression coverage for route parsing, geometry, and non-linear warnings."""
 
-import datetime as dt
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,7 +7,6 @@ from weather_core import AirportData
 from route_planning import (
     RouteWaypoint,
     build_route_plan,
-    chain_multi_leg_timings,
     destination_arrival_fuel_gal,
     great_circle_distance_nm,
     route_point_at_distance_nm,
@@ -135,33 +132,6 @@ def test_split_route_plan_at_fuel_stops_preserves_flown_subroutes():
     assert segments[0].route_plan.total_distance_nm + segments[1].route_plan.total_distance_nm == pytest.approx(
         route_plan.total_distance_nm
     )
-
-
-def test_chain_multi_leg_timings_accumulates_ground_time_across_timezones():
-    """Verify two stops accumulate numeric ETE and ground time on one absolute timeline."""
-
-    departure = dt.datetime(2026, 7, 19, 8, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
-    timings = chain_multi_leg_timings(
-        departure,
-        ("1h 30m", "2h 15m", "1h 05m"),
-        ground_minutes=45,
-    )
-
-    assert len(timings) == 3
-    assert timings[1].departure == timings[0].arrival + dt.timedelta(minutes=45)
-    assert timings[2].departure == timings[1].arrival + dt.timedelta(minutes=45)
-    assert timings[-1].arrival.astimezone(ZoneInfo("America/New_York")) == dt.datetime(
-        2026, 7, 19, 17, 20, tzinfo=ZoneInfo("America/New_York")
-    )
-
-
-def test_chain_multi_leg_timings_accepts_numeric_airborne_hours():
-    """Verify calculation timing does not need to round-trip through display text."""
-
-    departure = dt.datetime(2026, 7, 20, 20, 0, tzinfo=ZoneInfo("UTC"))
-    timing = chain_multi_leg_timings(departure, [1.5])[0]
-
-    assert timing.arrival == departure + dt.timedelta(hours=1, minutes=30)
 
 
 def test_parse_airborne_ete_rejects_malformed_or_overflow_values():
