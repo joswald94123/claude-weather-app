@@ -38,14 +38,15 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   sign legend; dead helpers deleted.
 
 ## Phase 3 — structural convergence (FIX-09 → brief-as-document)
-1. FIX-09 core extraction — PARTIAL (v.25): `weather_core.build_multi_leg_plan`
-   computes every chained leg (fuel handoff, timing, alternates, legal/quality,
-   stop rings, warnings-as-data) into frozen MissionLegPlan/MultiLegPlan; the
-   UI fuel-stop section is now one engine call plus rendering; golden two-leg
-   test covers chaining, capacity trim, and policy. Remaining FIX-09 items:
-   internalize the westbound-swap convention and the windtemp refetch decision,
-   sweep residual UI arithmetic (lb-gal conversion, focus-FL fallback), AppTest
-   value-equality guardrail, and the written no-UI-arithmetic rule.
+1. FIX-09 — DONE (v.25–v.26): `weather_core.build_multi_leg_plan` computes every
+   chained leg into frozen MissionLegPlan/MultiLegPlan with a golden two-leg
+   test; the westbound convention is core-owned (`derive_direction=True`, no UI
+   pre-swap; `is_westbound_route` exported); the windtemp refetch decision is
+   core-owned (`windtemp_cycle_correction`); residual UI arithmetic moved to
+   helpers (`gallons_from_pounds`, `preferred_baseline_flight_level`); the
+   no-UI-arithmetic rule is written into AGENTS.md. Deferred: an AppTest
+   asserting rendered values equal core-document fields — needs the feed-
+   fixture infrastructure (item 4) to drive a full mission headlessly.
 2. `FuelLedger` typed value object carrying the full fuel derivation
    (start → taxi → phases → FOB → requirement components → margin) consumed by
    every fuel surface.

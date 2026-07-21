@@ -11,6 +11,12 @@ JET_A_POUNDS_PER_GALLON = 6.7
 MAX_USABLE_FUEL_GAL = 292.0
 
 
+def gallons_from_pounds(pounds: float) -> float:
+    """Convert a Jet-A quantity from pounds to gallons at the planning density."""
+
+    return float(pounds) / JET_A_POUNDS_PER_GALLON
+
+
 @dataclass(frozen=True)
 class TailProfile:
     """Pilot-entered loading and observed-performance settings for one aircraft."""

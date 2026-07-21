@@ -2730,3 +2730,36 @@ def test_build_multi_leg_plan_chains_fuel_timing_and_alternates():
     assert plan.leg_arrival_fuels_gal[-1] == float(second.point.fuel_at_dest)
     assert first.has_approach_confirmed is True
     assert first.alternate_route_label == "Not specified — alternate fuel excluded"
+
+
+def test_build_mission_brief_derives_direction_and_matches_the_swap_convention():
+    """Verify derive_direction owns the westbound convention the UI used to pre-swap."""
+
+    ksts = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    kffz = AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0)
+    kwargs = dict(
+        departure_date=dt.date(2026, 3, 5),
+        departure_time_local=dt.time(10, 0),
+        start_fuel_gal=292,
+        flight_levels=[300],
+    )
+
+    derived = build_mission_brief(kffz, ksts, derive_direction=True, **kwargs)
+    legacy = build_mission_brief(ksts, kffz, is_return_leg=True, **kwargs)
+
+    assert weather_core.is_westbound_route(kffz, ksts)
+    assert "Westbound" in derived.direction_label
+    assert derived.points[0].ete == legacy.points[0].ete
+    assert derived.points[0].fuel_burn == legacy.points[0].fuel_burn
+
+
+def test_windtemp_cycle_correction_requires_product_issue_time():
+    """Verify no correction is offered without the product's own DATA-BASED-ON time."""
+
+    weather = fetch_noaa_weather(["KSTS"], session=_BrokenSession())  # type: ignore[arg-type]
+
+    correction = weather_core.windtemp_cycle_correction(
+        weather, dt.datetime(2026, 7, 21, 10, 0, tzinfo=dt.timezone.utc)
+    )
+
+    assert correction is None

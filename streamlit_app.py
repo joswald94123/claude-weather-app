@@ -73,6 +73,7 @@ from tail_profiles import (  # noqa: E402
     TailProfile,
     compute_planning_weights,
     deserialize_tail_profile,
+    gallons_from_pounds,
     serialize_tail_profile,
 )
 from ui_presenters import (  # noqa: E402
@@ -96,6 +97,9 @@ from weather_core import (  # noqa: E402
     fetch_noaa_weather,
     get_airport_data,
     hazard_label,
+    is_westbound_route,
+    preferred_baseline_flight_level,
+    windtemp_cycle_correction,
     infer_windtemp_region,
     normalize_icao,
     select_windtemp_forecast_cycle,
@@ -434,13 +438,6 @@ def _resolve_route_plan_for_ui(
     )
 
 
-def _is_westbound_route(departure: AirportData, destination: AirportData) -> bool:
-    """Infer hemispheric cruise parity from the shortest longitudinal route direction."""
-
-    wrapped_delta = ((destination.longitude - departure.longitude + 540.0) % 360.0) - 180.0
-    return wrapped_delta < 0
-
-
 def _highlight_low_fuel(value: int, landing_minimum: int) -> str:
     """Return a pandas Styler CSS rule for fuel values below the pilot minimum."""
 
@@ -506,7 +503,7 @@ def _sync_cruise_selection(
     if departure_airport is None or destination_airport is None:
         return FLIGHT_LEVELS
 
-    is_westbound = _is_westbound_route(departure_airport, destination_airport)
+    is_westbound = is_westbound_route(departure_airport, destination_airport)
     available_flight_levels = cruise_flight_levels_for_direction(is_westbound=is_westbound)
     default_cruise = "FL300" if is_westbound else "FL310"
     valid_options = {f"FL{fl}" for fl in available_flight_levels}
@@ -1718,7 +1715,7 @@ with st.sidebar:
                 help="Published Daher climb-table weight used for climb time, distance, and fuel interpolation.",
             )
         )
-    preview_flight_level = 280 if 280 in available_flight_levels else available_flight_levels[len(available_flight_levels) // 2]
+    preview_flight_level = preferred_baseline_flight_level(available_flight_levels)
     cruise_preview = sample_cruise_performance(
         active_performance_profile,
         flight_level=preview_flight_level,
@@ -1921,7 +1918,7 @@ with st.sidebar:
         help="Set 0 to use only calculated alternate, final reserve, and landing minimum fuel.",
     )
     reserve_floor_gal = (
-        reserve_floor_value / JET_A_POUNDS_PER_GALLON
+        gallons_from_pounds(reserve_floor_value)
         if reserve_floor_unit == "lb"
         else reserve_floor_value
     )
@@ -2077,15 +2074,10 @@ with st.spinner("Recalculating..."):
         departure_time.strftime("%H:%M"),
         _APP_RELEASE,
     )
-    initial_windtemp_status = weather.feed_statuses.get("windtemp")
-    if initial_windtemp_status is not None and initial_windtemp_status.issue_time_utc is not None:
-        product_relative_fcst = select_windtemp_forecast_cycle(
-            selected_etd.astimezone(dt.timezone.utc),
-            now_utc=initial_windtemp_status.issue_time_utc,
-        )
-        if product_relative_fcst != windtemp_fcst:
-            windtemp_fcst = product_relative_fcst
-            weather = _cached_noaa_weather(
+    corrected_windtemp_fcst = windtemp_cycle_correction(weather, selected_etd.astimezone(dt.timezone.utc))
+    if corrected_windtemp_fcst is not None and corrected_windtemp_fcst != windtemp_fcst:
+        windtemp_fcst = corrected_windtemp_fcst
+        weather = _cached_noaa_weather(
                 departure_airport.icao,
                 destination_airport.icao,
                 alternate_airport.icao if alternate_airport is not None else "",
@@ -2104,15 +2096,14 @@ with st.spinner("Recalculating..."):
         route_plan=route_plan,
     )
 
-    is_westbound = _is_westbound_route(departure_airport, destination_airport)
-    brief_departure = destination_airport if is_westbound else departure_airport
-    brief_destination = departure_airport if is_westbound else destination_airport
+    # Direction ownership lives in the core: it derives westbound from the
+    # longitudes and swaps internally, so the UI never pre-swaps endpoints.
     brief = _build_mission_brief_compatible(
-        brief_departure,
-        brief_destination,
+        departure_airport,
+        destination_airport,
         departure_date=departure_date,
         departure_time_local=departure_time,
-        is_return_leg=is_westbound,
+        derive_direction=True,
         start_fuel_gal=int(start_fuel),
         fixed_fuel_gal_override=float(startup_taxi_fuel),
         climb_rate_fpm=int(climb_rate_fpm),
@@ -2560,7 +2551,7 @@ hazard_fl_options = [f"FL{fl}" for fl in hazard_fl_values]
 if selected_cruise_fl in available_flight_levels:
     hazard_default_idx = hazard_fl_values.index(selected_cruise_fl)
 else:
-    default_hazard_fl = 280 if 280 in available_flight_levels else available_flight_levels[len(available_flight_levels) // 2]
+    default_hazard_fl = preferred_baseline_flight_level(available_flight_levels)
     hazard_default_idx = hazard_fl_values.index(default_hazard_fl)
 
 hazard_follow_value = hazard_fl_options[hazard_default_idx]

@@ -407,6 +407,19 @@ def normalize_icao(raw: str) -> str:
     return (raw or "").strip().upper()
 
 
+def is_westbound_route(departure: AirportData, destination: AirportData) -> bool:
+    """Classify route direction by the wrapped longitude delta."""
+
+    wrapped_delta = ((destination.longitude - departure.longitude + 540.0) % 360.0) - 180.0
+    return wrapped_delta < 0
+
+
+def preferred_baseline_flight_level(levels: list[int]) -> int:
+    """Pick the comparison/preview altitude: FL280 when available, else the middle."""
+
+    return 280 if 280 in levels else levels[len(levels) // 2]
+
+
 def cruise_flight_levels_for_direction(*, is_westbound: bool) -> list[int]:
     """Return the standard TBM cruise levels for the route direction."""
 
@@ -3178,6 +3191,23 @@ def _pirep_query_params_for_airports(icaos: list[str]) -> dict[str, object]:
     return {"format": "json", "hours": "3"}
 
 
+def windtemp_cycle_correction(
+    weather: NoaaWeather,
+    departure_dt_utc: dt.datetime,
+) -> str | None:
+    """Return the FB cycle implied by the fetched product's own issue time.
+
+    The first fetch selects a cycle relative to wall-clock now; once the product's
+    DATA-BASED-ON time is known, the ETD may map to a different issued cycle. None
+    means no correction basis is available.
+    """
+
+    status = weather.feed_statuses.get("windtemp")
+    if status is None or status.issue_time_utc is None:
+        return None
+    return select_windtemp_forecast_cycle(departure_dt_utc, now_utc=status.issue_time_utc)
+
+
 def select_windtemp_forecast_cycle(
     target_time_utc: dt.datetime | None,
     *,
@@ -4220,8 +4250,7 @@ def evaluate_route_hazards(
             destination.longitude,
         )
     )
-    wrapped_delta = ((destination.longitude - departure.longitude + 540.0) % 360.0) - 180.0
-    is_westbound = wrapped_delta < 0
+    is_westbound = is_westbound_route(departure, destination)
 
     for fl in levels:
         cruise_altitude_ft = float(fl * 100)
@@ -4456,8 +4485,7 @@ def build_route_vertical_profile(
             destination.longitude,
         )
     )
-    wrapped_delta = ((destination.longitude - departure.longitude + 540.0) % 360.0) - 180.0
-    is_westbound = wrapped_delta < 0
+    is_westbound = is_westbound_route(departure, destination)
     cruise_altitude_ft = int(flight_level * 100)
     profile = _flight_level_profile(
         flight_level=flight_level,
@@ -5383,7 +5411,7 @@ def build_mission_brief(
     *,
     departure_date: dt.date,
     departure_time_local: dt.time,
-    is_return_leg: bool,
+    is_return_leg: bool = False,
     start_fuel_gal: int,
     climb_rate_fpm: int = 2200,
     descent_rate_fpm: int = 1500,
@@ -5407,11 +5435,23 @@ def build_mission_brief(
     wind_model: RouteWindModel | None = None,
     flight_levels: list[int] | None = None,
     route_plan: RoutePlan | None = None,
+    derive_direction: bool = False,
 ) -> MissionBrief:
-    """Assemble the mission brief table for the requested route and ETD."""
+    """Assemble the mission brief table for the requested route and ETD.
 
-    route_from = destination if is_return_leg else departure
-    route_to = departure if is_return_leg else destination
+    With derive_direction=True the westbound/eastbound convention is owned here:
+    callers pass (departure, destination) as flown and is_return_leg is ignored.
+    """
+
+    if derive_direction:
+        # The caller's order is as-flown; is_return_leg only drives labels/parity.
+        is_return_leg = is_westbound_route(departure, destination)
+        route_from, route_to = departure, destination
+    else:
+        # Legacy convention: westbound callers pre-swap endpoints and set the flag,
+        # which this internal swap undoes.
+        route_from = destination if is_return_leg else departure
+        route_to = departure if is_return_leg else destination
 
     active_departure_tz = pytz.timezone(route_from.timezone)
     destination_tz = pytz.timezone(route_to.timezone)

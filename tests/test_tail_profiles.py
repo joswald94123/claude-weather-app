@@ -6,6 +6,7 @@ from tail_profiles import (
     TailProfile,
     compute_planning_weights,
     deserialize_tail_profile,
+    gallons_from_pounds,
     serialize_tail_profile,
 )
 
@@ -34,3 +35,9 @@ def test_tail_profile_json_round_trip_is_versioned():
 def test_tail_profile_rejects_unknown_schema():
     with pytest.raises(ValueError, match="Unsupported"):
         deserialize_tail_profile('{"schema_version": 2, "profile": {}}')
+
+
+def test_gallons_from_pounds_uses_planning_density():
+    """Verify the shared lb-to-gal conversion matches the Jet-A planning density."""
+
+    assert gallons_from_pounds(670.0) == pytest.approx(100.0)
