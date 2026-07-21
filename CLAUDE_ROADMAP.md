@@ -28,8 +28,14 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   matching app_version; FAA missing-anchor failure tests; unknown hazard types
   render generically in the profile (and an explicit empty visible-set now
   means hide-all); workflow timeout-minutes; snapshot env-flag comment;
-  launcher requires pwsh and targets this repo. Deferred: clean 3.13 lock
-  regeneration (pins work; regenerate next time dependencies change).
+  launcher requires pwsh and targets this repo.
+- DONE (v.27–v.30) Review-remainder closeout: FIX-06 items 2–7 (fail-loud
+  sentinels, clipped composite bands, MIN_PLANNING_RATE_FPM, page-map assert,
+  integrator dedup, label trio, snapshot --check under pytest); numeric AWC
+  severity verified live and >=4 documented High; ISO validTime parser test;
+  UI source-contract tests; NASR refresh outage tolerance; clean 3.13
+  pip-compile lock regeneration (backport pins removed). Open deferral: the
+  AppTest value-equality guardrail, blocked on feed fixtures (Phase 3 item 4).
 - DONE (v.23) FIX-05 remainder: spinners over per-leg briefs, destination
   rings, and the vertical profile; widget default+session-state warnings
   removed (cruise, ETD, hazard-detail); ignored per-leg alternate entries
