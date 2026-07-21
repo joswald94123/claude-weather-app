@@ -87,6 +87,7 @@ from weather_core import (  # noqa: E402
     build_alternate_range_rings,
     build_mission_brief,
     build_mission_risk_summary,
+    build_multi_leg_plan,
     build_route_vertical_profile,
     cruise_flight_levels_for_direction,
     evaluate_legal_alternate_requirement,
@@ -335,30 +336,6 @@ def _faa_waypoint_to_route_waypoint(waypoint: FaaWaypoint) -> RouteWaypoint:
         waypoint_type=waypoint.waypoint_type,
         source=waypoint.source,
         name=waypoint.name,
-    )
-
-
-def _route_waypoint_to_airport_data(
-    waypoint: RouteWaypoint,
-    *,
-    fallback_timezone: str,
-) -> AirportData:
-    """Build AirportData for route-leg math while preserving FAA coordinates."""
-
-    try:
-        airport = get_airport_data(waypoint.identifier) if waypoint.waypoint_type == "Airport" else None
-    except ValueError:
-        airport = None
-    timezone = airport.timezone if airport else fallback_timezone
-    elevation_ft = airport.elevation_ft if airport else 0.0
-    source = airport.source if airport else waypoint.source
-    return AirportData(
-        icao=waypoint.identifier,
-        latitude=waypoint.latitude,
-        longitude=waypoint.longitude,
-        timezone=timezone,
-        source=source,
-        elevation_ft=elevation_ft,
     )
 
 
@@ -2289,203 +2266,114 @@ segment_arrival_fuels_gal: list[float] = []
 leg_reserve_margins_gal: list[tuple[str, int]] = []
 range_insets: list[UiRangeInset] = []
 if fuel_stop_segments:
-    current_segment_departure_dt = selected_etd
-    current_segment_start_fuel = float(start_fuel)
-    for segment_index, fuel_segment in enumerate(fuel_stop_segments, start=1):
-        segment_start_waypoint = fuel_segment.route_plan.waypoints[0]
-        segment_end_waypoint = fuel_segment.route_plan.waypoints[-1]
-        segment_departure_airport = _route_waypoint_to_airport_data(
-            segment_start_waypoint,
-            fallback_timezone=departure_airport.timezone,
-        )
-        segment_destination_airport = _route_waypoint_to_airport_data(
-            segment_end_waypoint,
-            fallback_timezone=destination_airport.timezone,
-        )
-        segment_departure_tz = pytz.timezone(segment_departure_airport.timezone)
-        segment_departure_local = current_segment_departure_dt.astimezone(segment_departure_tz)
-        # First policy pass resolves only the alternate choice (landing fuel is a
-        # placeholder); it is deliberately re-run after the leg brief with real
-        # landing fuel to compute the fuel handoff. Do not merge the two calls.
-        segment_policy = resolve_fuel_stop_leg_policy(
-            destination_identifier=segment_end_waypoint.identifier,
-            is_final_leg=segment_index == len(fuel_stop_segments),
-            landing_fuel_gal=0.0,
-            default_start_fuel_gal=float(start_fuel),
-            uplifts=fuel_stop_uplifts,
-            alternates=fuel_stop_alternates,
-            mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
-        )
-        segment_alternate_code = segment_policy.alternate_code
-        segment_alternate_route_label = ""
-        segment_alternate_distance_nm = 0.0
-        if segment_policy.alternate_is_explicit and segment_alternate_code:
-            segment_alternate_airport = _resolve_if_valid_icao(segment_alternate_code)
-            if segment_alternate_airport is not None:
-                segment_alternate_route = build_route_plan(segment_destination_airport, segment_alternate_airport)
-                segment_alternate_distance_nm = float(segment_alternate_route.total_distance_nm)
-                segment_alternate_route_label = f"{segment_destination_airport.icao} -> {segment_alternate_airport.icao}"
-            else:
-                segment_alternate_route_label = (
-                    f"{segment_alternate_code} unresolved — alternate fuel excluded"
-                )
-                st.warning(
-                    f"Leg {segment_index} alternate {segment_alternate_code} could not be resolved; "
-                    "alternate fuel is excluded from that leg. Correct the identifier before relying on the plan."
-                )
-        elif segment_index == len(fuel_stop_segments):
-            segment_alternate_distance_nm = float(alternate_distance_nm)
-            segment_alternate_route_label = alternate_route_plan.route_text if alternate_route_plan is not None else ""
-        else:
-            segment_alternate_route_label = "Not specified — alternate fuel excluded"
-        try:
-            with st.spinner(f"Planning fuel-stop leg {segment_index}..."):
-                segment_brief = _build_mission_brief_compatible(
-                    segment_departure_airport,
-                    segment_destination_airport,
-            departure_date=segment_departure_local.date(),
-            departure_time_local=segment_departure_local.time().replace(second=0, microsecond=0, tzinfo=None),
-            is_return_leg=False,
-            start_fuel_gal=int(round(current_segment_start_fuel)),
-            fixed_fuel_gal_override=float(startup_taxi_fuel),
-            climb_rate_fpm=int(climb_rate_fpm),
-            descent_rate_fpm=int(descent_rate_fpm),
-            cruise_tas_kts=int(cruise_tas_kts),
-            climb_ias_kts=int(climb_ias_kts),
-            descent_ias_kts=int(descent_ias_kts),
-            performance_profile=active_performance_profile_for_calc,
-            cruise_mode_id=active_cruise_mode_id_for_calc,
-            climb_schedule_id=active_climb_schedule_id_for_calc,
-            upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
-            climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
-            descent_profile_id=active_descent_profile_id_for_calc,
-            descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-            cruise_weight_lb=active_cruise_weight_lb_for_calc,
-            climb_weight_lb=active_climb_weight_lb_for_calc,
-            alternate_distance_nm=segment_alternate_distance_nm,
-            reserve_minutes=float(reserve_minutes),
-            landing_minimum_gal=float(landing_minimum),
-            reserve_floor_gal=float(reserve_floor_gal) if reserve_floor_gal > 0 else None,
-            # Per-leg model: reusing the full-route model would hand this leg's
-            # uncovered bins another geography's precomputed winds.
-            wind_model=build_route_wind_model(
-                segment_departure_airport,
-                segment_destination_airport,
-                weather.windtemps,
-                route_plan=fuel_segment.route_plan,
-            ),
-            flight_levels=[focus_flight_level],
-                route_plan=fuel_segment.route_plan,
+    leg_invariant_brief_kwargs = dict(
+        fixed_fuel_gal_override=float(startup_taxi_fuel),
+        climb_rate_fpm=int(climb_rate_fpm),
+        descent_rate_fpm=int(descent_rate_fpm),
+        cruise_tas_kts=int(cruise_tas_kts),
+        climb_ias_kts=int(climb_ias_kts),
+        descent_ias_kts=int(descent_ias_kts),
+        performance_profile=active_performance_profile_for_calc,
+        cruise_mode_id=active_cruise_mode_id_for_calc,
+        climb_schedule_id=active_climb_schedule_id_for_calc,
+        upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
+        climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
+        descent_profile_id=active_descent_profile_id_for_calc,
+        descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
+        cruise_weight_lb=active_cruise_weight_lb_for_calc,
+        climb_weight_lb=active_climb_weight_lb_for_calc,
+        reserve_minutes=float(reserve_minutes),
+        landing_minimum_gal=float(landing_minimum),
+        reserve_floor_gal=float(reserve_floor_gal) if reserve_floor_gal > 0 else None,
+    )
+    try:
+        with st.spinner("Planning fuel-stop legs..."):
+            multi_leg_plan = build_multi_leg_plan(
+                fuel_stop_segments=fuel_stop_segments,
+                departure_dt=selected_etd,
+                start_fuel_gal=float(start_fuel),
+                ground_minutes=float(fuel_stop_ground_minutes),
+                uplifts=fuel_stop_uplifts,
+                alternates=fuel_stop_alternates,
+                mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
+                mission_alternate_distance_nm=float(alternate_distance_nm),
+                mission_alternate_route_label=(
+                    alternate_route_plan.route_text if alternate_route_plan is not None else ""
+                ),
+                approach_confirmed_icaos=fuel_stop_approach_airports,
+                destination_has_approach=bool(destination_has_approach),
+                departure_fallback_timezone=departure_airport.timezone,
+                destination_fallback_timezone=destination_airport.timezone,
+                weather=weather,
+                usable_fuel_capacity_gal=MAX_USABLE_FUEL_GAL,
+                focus_flight_level=focus_flight_level,
+                mission_brief_kwargs=leg_invariant_brief_kwargs,
+                stop_ring_kwargs=dict(
+                    performance_profile=active_performance_profile_for_calc,
+                    cruise_mode_id=active_cruise_mode_id_for_calc,
+                    climb_schedule_id=active_climb_schedule_id_for_calc,
+                    descent_profile_id=active_descent_profile_id_for_calc,
+                    descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
+                    cruise_weight_lb=active_cruise_weight_lb_for_calc,
+                    climb_weight_lb=active_climb_weight_lb_for_calc,
+                    wind_model=route_wind_model,
+                    alt_missed_approach_fuel_gal=float(missed_approach_fuel),
+                ),
             )
-        except (ValueError, TypeError, KeyError) as exc:
-            st.error(f"Leg {segment_index} mission calculations failed: {exc}")
-            st.stop()
-        segment_point = segment_brief.points[0]
-        segment_arrival_fuels_gal.append(float(segment_point.fuel_at_dest))
-        try:
-            segment_timing = chain_multi_leg_timings(
-                current_segment_departure_dt,
-                [float(segment_point.airborne_hours)],
-            )[0]
-        except ValueError as exc:
-            st.error(f"Leg {segment_index} timing could not be chained: {exc}")
-            st.stop()
-        segment_eta_dt = segment_timing.arrival
-        if segment_index == len(fuel_stop_segments):
-            mission_arrival_eta_utc = segment_eta_dt.astimezone(dt.timezone.utc)
-        segment_arrival_tz = pytz.timezone(segment_destination_airport.timezone)
-        segment_eta_local = segment_eta_dt.astimezone(segment_arrival_tz)
-        segment_has_approach = (
-            bool(destination_has_approach)
-            if segment_index == len(fuel_stop_segments)
-            else segment_destination_airport.icao in fuel_stop_approach_airports
-        )
-        segment_legal_alternate = evaluate_legal_alternate_requirement(
-            weather=weather,
-            destination_icao=segment_destination_airport.icao,
-            eta_utc=segment_eta_dt.astimezone(dt.timezone.utc),
-            has_destination_approach=segment_has_approach,
-        )
-        segment_quality_checks = evaluate_terminal_forecast_quality(
-            weather=weather,
-            phase_airports={f"Leg {segment_index} arrival": segment_destination_airport.icao},
-        )
-        segment_quality = segment_quality_checks[0] if segment_quality_checks else None
-        explicit_uplift_gal = segment_policy.uplift_gal
-        if segment_index < len(fuel_stop_segments):
-            fuel_stop_rings = _build_waypoint_range_rings(
-                airport=segment_destination_airport,
-                fuel_on_board_gal=float(segment_point.fuel_at_dest),
-                performance_profile=active_performance_profile_for_calc,
-                cruise_mode_id=active_cruise_mode_id_for_calc,
-                climb_schedule_id=active_climb_schedule_id_for_calc,
-                descent_profile_id=active_descent_profile_id_for_calc,
-                descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-                cruise_weight_lb=active_cruise_weight_lb_for_calc,
-                climb_weight_lb=active_climb_weight_lb_for_calc,
-                wind_model=route_wind_model,
-                alt_missed_approach_fuel_gal=float(missed_approach_fuel),
-            )
+    except (ValueError, TypeError, KeyError) as exc:
+        st.error(f"Fuel-stop planning failed: {exc}")
+        st.stop()
+    for leg in multi_leg_plan.legs:
+        for leg_warning in leg.warnings:
+            st.warning(leg_warning)
+        leg_departure_local = leg.departure_utc.astimezone(pytz.timezone(leg.departure_airport.timezone))
+        leg_eta_local = leg.arrival_utc.astimezone(pytz.timezone(leg.destination_airport.timezone))
+        if not leg.is_final_leg:
             range_insets.append(
                 UiRangeInset(
                     role="Fuel stop",
-                    label=segment_destination_airport.icao,
-                    airport=segment_destination_airport,
-                    fuel_on_board_gal=float(segment_point.fuel_at_dest),
-                    rings=fuel_stop_rings,
+                    label=leg.destination_airport.icao,
+                    airport=leg.destination_airport,
+                    fuel_on_board_gal=float(leg.point.fuel_at_dest),
+                    rings=leg.fuel_stop_rings,
                 )
-            )
-        segment_policy = resolve_fuel_stop_leg_policy(
-            destination_identifier=segment_end_waypoint.identifier,
-            is_final_leg=segment_index == len(fuel_stop_segments),
-            landing_fuel_gal=float(segment_point.fuel_at_dest),
-            default_start_fuel_gal=float(start_fuel),
-            uplifts=fuel_stop_uplifts,
-            alternates=fuel_stop_alternates,
-            mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
-            usable_fuel_capacity_gal=MAX_USABLE_FUEL_GAL,
-        )
-        next_start_fuel = segment_policy.next_start_fuel_gal
-        if segment_policy.uplift_trimmed_gal > 0:
-            st.warning(
-                f"Leg {segment_index} uplift at {segment_end_waypoint.identifier} exceeds the "
-                f"{int(MAX_USABLE_FUEL_GAL)} gal usable capacity; next start fuel trimmed by "
-                f"{segment_policy.uplift_trimmed_gal:.0f} gal to tank capacity."
             )
         fuel_stop_segment_rows.append(
             {
-                "Leg": segment_index,
+                "Leg": leg.leg_number,
                 "Cruise FL": focus_flight_level_text,
-                "Route": f"{fuel_segment.start_identifier} -> {fuel_segment.end_identifier}",
-                "Start Fuel": int(round(current_segment_start_fuel)),
-                "Distance": segment_brief.distance_nm,
-                "ETD": segment_departure_local.strftime("%a %I:%M %p %Z"),
-                "ETA": segment_eta_local.strftime("%a %I:%M %p %Z"),
-                "Airborne ETE": segment_point.ete,
-                "Fuel Burn": segment_point.fuel_burn,
-                "Fuel at Landing": segment_point.fuel_at_dest,
+                "Route": f"{leg.start_identifier} -> {leg.end_identifier}",
+                "Start Fuel": int(round(leg.start_fuel_gal)),
+                "Distance": leg.brief.distance_nm,
+                "ETD": leg_departure_local.strftime("%a %I:%M %p %Z"),
+                "ETA": leg_eta_local.strftime("%a %I:%M %p %Z"),
+                "Airborne ETE": leg.point.ete,
+                "Fuel Burn": leg.point.fuel_burn,
+                "Fuel at Landing": leg.point.fuel_at_dest,
                 "Uplift": (
-                    int(round(explicit_uplift_gal))
-                    if explicit_uplift_gal is not None and segment_index < len(fuel_stop_segments)
-                    else ("Full reset" if segment_index < len(fuel_stop_segments) else "")
+                    int(round(leg.uplift_gal))
+                    if leg.uplift_gal is not None and not leg.is_final_leg
+                    else ("Full reset" if not leg.is_final_leg else "")
                 ),
-                "Next Start Fuel": int(round(next_start_fuel)) if segment_index < len(fuel_stop_segments) else "",
-                "Leg Alternate": segment_alternate_route_label,
-                "Alt Dist": int(round(segment_alternate_distance_nm)) if segment_alternate_distance_nm else 0,
-                "Alt + Reserve": segment_point.calculated_required_landing_fuel_gal,
+                "Next Start Fuel": int(round(leg.next_start_fuel_gal)) if not leg.is_final_leg else "",
+                "Leg Alternate": leg.alternate_route_label,
+                "Alt Dist": int(round(leg.alternate_distance_nm)) if leg.alternate_distance_nm else 0,
+                "Alt + Reserve": leg.point.calculated_required_landing_fuel_gal,
                 "Landing Min": int(math.ceil(float(landing_minimum))),
-                "Pilot Floor": segment_point.reserve_floor_gal,
-                "Effective Req": segment_point.required_landing_fuel_gal,
-                "Reserve Margin": segment_point.reserve_margin_gal,
-                "Fuel Status": segment_point.fuel_status,
-                "Approach Confirmed": "Yes" if segment_has_approach else "No",
-                "Legal Alternate": segment_legal_alternate.label,
-                "Forecast Quality": segment_quality.label if segment_quality is not None else "No material mismatch",
+                "Pilot Floor": leg.point.reserve_floor_gal,
+                "Effective Req": leg.point.required_landing_fuel_gal,
+                "Reserve Margin": leg.point.reserve_margin_gal,
+                "Fuel Status": leg.point.fuel_status,
+                "Approach Confirmed": "Yes" if leg.has_approach_confirmed else "No",
+                "Legal Alternate": leg.legal_alternate.label,
+                "Forecast Quality": (
+                    leg.forecast_quality.label if leg.forecast_quality is not None else "No material mismatch"
+                ),
             }
         )
-        leg_reserve_margins_gal.append((f"Leg {segment_index}", int(segment_point.reserve_margin_gal)))
-        current_segment_departure_dt = segment_eta_dt + dt.timedelta(minutes=float(fuel_stop_ground_minutes))
-        current_segment_start_fuel = next_start_fuel
+    segment_arrival_fuels_gal = list(multi_leg_plan.leg_arrival_fuels_gal)
+    leg_reserve_margins_gal = list(multi_leg_plan.leg_reserve_margins_gal)
+    mission_arrival_eta_utc = multi_leg_plan.final_arrival_utc
     legal_alternate_assessment = evaluate_legal_alternate_requirement(
         weather=weather,
         destination_icao=destination_airport.icao,

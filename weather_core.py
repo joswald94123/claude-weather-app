@@ -23,9 +23,14 @@ from performance_profiles import (
     sample_descent_rows,
 )
 from route_planning import (
+    RouteFuelSegment,
     RoutePlan,
+    RouteWaypoint,
+    build_route_plan as _route_plan_between_airports,
+    chain_multi_leg_timings,
     great_circle_distance_nm as _route_great_circle_distance_nm,
     initial_track_deg as _route_initial_track_deg,
+    resolve_fuel_stop_leg_policy,
     route_midpoint_lat_lon,
     route_point_at_distance_nm as _route_plan_point_at_distance_nm,
     route_track_at_distance_nm as _route_plan_track_at_distance_nm,
@@ -5496,4 +5501,270 @@ def build_mission_brief(
         direction_label=f"{direction} ({wind_type})",
         baseline_wind_knots=baseline_wind_knots,
         points=points,
+    )
+
+
+@dataclass(frozen=True)
+class MissionLegPlan:
+    """One fully computed chained leg of a fuel-stop mission."""
+
+    leg_number: int
+    is_final_leg: bool
+    start_identifier: str
+    end_identifier: str
+    departure_airport: AirportData
+    destination_airport: AirportData
+    departure_utc: dt.datetime
+    arrival_utc: dt.datetime
+    start_fuel_gal: float
+    brief: MissionBrief
+    point: MissionPoint
+    alternate_distance_nm: float
+    alternate_route_label: str
+    uplift_gal: float | None
+    next_start_fuel_gal: float
+    has_approach_confirmed: bool
+    legal_alternate: LegalAlternateAssessment
+    forecast_quality: ForecastQualityCheck | None
+    fuel_stop_rings: tuple[AlternateRangeRing, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MultiLegPlan:
+    """The complete chained fuel-stop mission the UI renders without arithmetic."""
+
+    legs: tuple[MissionLegPlan, ...]
+    final_arrival_utc: dt.datetime | None
+    leg_reserve_margins_gal: tuple[tuple[str, int], ...]
+    leg_arrival_fuels_gal: tuple[float, ...]
+
+
+def route_waypoint_airport_data(
+    waypoint: RouteWaypoint,
+    *,
+    fallback_timezone: str,
+) -> AirportData:
+    """Build AirportData for route-leg math while preserving FAA coordinates."""
+
+    try:
+        airport = get_airport_data(waypoint.identifier) if waypoint.waypoint_type == "Airport" else None
+    except ValueError:
+        airport = None
+    timezone = airport.timezone if airport else fallback_timezone
+    elevation_ft = airport.elevation_ft if airport else 0.0
+    source = airport.source if airport else waypoint.source
+    return AirportData(
+        icao=waypoint.identifier,
+        latitude=waypoint.latitude,
+        longitude=waypoint.longitude,
+        timezone=timezone,
+        source=source,
+        elevation_ft=elevation_ft,
+    )
+
+
+def build_multi_leg_plan(
+    *,
+    fuel_stop_segments: tuple[RouteFuelSegment, ...],
+    departure_dt: dt.datetime,
+    start_fuel_gal: float,
+    ground_minutes: float,
+    uplifts: dict[str, float],
+    alternates: dict[str, str],
+    mission_alternate_code: str | None,
+    mission_alternate_distance_nm: float,
+    mission_alternate_route_label: str,
+    approach_confirmed_icaos: set[str],
+    destination_has_approach: bool,
+    departure_fallback_timezone: str,
+    destination_fallback_timezone: str,
+    weather: NoaaWeather,
+    usable_fuel_capacity_gal: float | None,
+    focus_flight_level: int,
+    mission_brief_kwargs: dict[str, object],
+    stop_ring_kwargs: dict[str, object] | None = None,
+) -> MultiLegPlan:
+    """Compute every chained fuel-stop leg: fuel handoff, timing, alternates, and rings.
+
+    All mission arithmetic lives here so the UI layer only formats and renders.
+    mission_brief_kwargs carries the leg-invariant performance/reserve settings;
+    per-leg values (dates, fuel, wind model, alternate distance, route plan) are
+    supplied by this engine. stop_ring_kwargs enables post-missed range rings at
+    intermediate stops; ring failures degrade to a warning rather than aborting.
+    """
+
+    legs: list[MissionLegPlan] = []
+    leg_margins: list[tuple[str, int]] = []
+    leg_arrival_fuels: list[float] = []
+    final_arrival_utc: dt.datetime | None = None
+    current_departure_dt = departure_dt
+    current_start_fuel = float(start_fuel_gal)
+    total_legs = len(fuel_stop_segments)
+    for leg_number, fuel_segment in enumerate(fuel_stop_segments, start=1):
+        is_final_leg = leg_number == total_legs
+        warnings: list[str] = []
+        leg_departure = route_waypoint_airport_data(
+            fuel_segment.route_plan.waypoints[0],
+            fallback_timezone=departure_fallback_timezone,
+        )
+        leg_destination = route_waypoint_airport_data(
+            fuel_segment.route_plan.waypoints[-1],
+            fallback_timezone=destination_fallback_timezone,
+        )
+        departure_local = current_departure_dt.astimezone(pytz.timezone(leg_departure.timezone))
+
+        # First policy pass resolves only the alternate choice (landing fuel is a
+        # placeholder); it is re-run after the leg brief with real landing fuel to
+        # compute the fuel handoff. Do not merge the two calls.
+        alternate_policy = resolve_fuel_stop_leg_policy(
+            destination_identifier=leg_destination.icao,
+            is_final_leg=is_final_leg,
+            landing_fuel_gal=0.0,
+            default_start_fuel_gal=float(start_fuel_gal),
+            uplifts=uplifts,
+            alternates=alternates,
+            mission_alternate_code=mission_alternate_code,
+        )
+        alternate_distance_nm = 0.0
+        alternate_route_label = ""
+        if alternate_policy.alternate_is_explicit and alternate_policy.alternate_code:
+            try:
+                leg_alternate = get_airport_data(alternate_policy.alternate_code)
+            except ValueError:
+                leg_alternate = None
+            if leg_alternate is not None:
+                alternate_route = _route_plan_between_airports(leg_destination, leg_alternate)
+                alternate_distance_nm = float(alternate_route.total_distance_nm)
+                alternate_route_label = f"{leg_destination.icao} -> {leg_alternate.icao}"
+            else:
+                alternate_route_label = (
+                    f"{alternate_policy.alternate_code} unresolved — alternate fuel excluded"
+                )
+                warnings.append(
+                    f"Leg {leg_number} alternate {alternate_policy.alternate_code} could not be "
+                    "resolved; alternate fuel is excluded from that leg. Correct the identifier "
+                    "before relying on the plan."
+                )
+        elif is_final_leg:
+            alternate_distance_nm = float(mission_alternate_distance_nm)
+            alternate_route_label = mission_alternate_route_label
+        else:
+            alternate_route_label = "Not specified — alternate fuel excluded"
+
+        try:
+            leg_brief = build_mission_brief(
+                leg_departure,
+                leg_destination,
+                departure_date=departure_local.date(),
+                departure_time_local=departure_local.time().replace(second=0, microsecond=0, tzinfo=None),
+                is_return_leg=False,
+                start_fuel_gal=int(round(current_start_fuel)),
+                alternate_distance_nm=alternate_distance_nm,
+                # Per-leg model: reusing the full-route model would hand this leg's
+                # uncovered bins another geography's precomputed winds.
+                wind_model=build_route_wind_model(
+                    leg_departure,
+                    leg_destination,
+                    weather.windtemps,
+                    route_plan=fuel_segment.route_plan,
+                ),
+                flight_levels=[focus_flight_level],
+                route_plan=fuel_segment.route_plan,
+                **mission_brief_kwargs,
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError(f"Leg {leg_number} mission calculations failed: {exc}") from exc
+        leg_point = leg_brief.points[0]
+        try:
+            leg_timing = chain_multi_leg_timings(
+                current_departure_dt,
+                [float(leg_point.airborne_hours)],
+            )[0]
+        except ValueError as exc:
+            raise ValueError(f"Leg {leg_number} timing could not be chained: {exc}") from exc
+        arrival_utc = leg_timing.arrival.astimezone(dt.timezone.utc)
+        if is_final_leg:
+            final_arrival_utc = arrival_utc
+
+        has_approach = (
+            bool(destination_has_approach)
+            if is_final_leg
+            else leg_destination.icao in approach_confirmed_icaos
+        )
+        legal_alternate = evaluate_legal_alternate_requirement(
+            weather=weather,
+            destination_icao=leg_destination.icao,
+            eta_utc=arrival_utc,
+            has_destination_approach=has_approach,
+        )
+        quality_checks = evaluate_terminal_forecast_quality(
+            weather=weather,
+            phase_airports={f"Leg {leg_number} arrival": leg_destination.icao},
+        )
+
+        fuel_stop_rings: tuple[AlternateRangeRing, ...] = ()
+        if not is_final_leg and stop_ring_kwargs is not None:
+            try:
+                fuel_stop_rings = build_alternate_range_rings(
+                    destination=leg_destination,
+                    fuel_at_destination_gal=float(leg_point.fuel_at_dest),
+                    **stop_ring_kwargs,
+                )
+            except (ValueError, TypeError, KeyError) as exc:
+                warnings.append(
+                    f"Range rings for {leg_destination.icao} could not be calculated: {exc}"
+                )
+
+        handoff_policy = resolve_fuel_stop_leg_policy(
+            destination_identifier=leg_destination.icao,
+            is_final_leg=is_final_leg,
+            landing_fuel_gal=float(leg_point.fuel_at_dest),
+            default_start_fuel_gal=float(start_fuel_gal),
+            uplifts=uplifts,
+            alternates=alternates,
+            mission_alternate_code=mission_alternate_code,
+            usable_fuel_capacity_gal=usable_fuel_capacity_gal,
+        )
+        if handoff_policy.uplift_trimmed_gal > 0 and usable_fuel_capacity_gal is not None:
+            warnings.append(
+                f"Leg {leg_number} uplift at {leg_destination.icao} exceeds the "
+                f"{int(usable_fuel_capacity_gal)} gal usable capacity; next start fuel trimmed by "
+                f"{handoff_policy.uplift_trimmed_gal:.0f} gal to tank capacity."
+            )
+
+        legs.append(
+            MissionLegPlan(
+                leg_number=leg_number,
+                is_final_leg=is_final_leg,
+                start_identifier=fuel_segment.start_identifier,
+                end_identifier=fuel_segment.end_identifier,
+                departure_airport=leg_departure,
+                destination_airport=leg_destination,
+                departure_utc=current_departure_dt.astimezone(dt.timezone.utc),
+                arrival_utc=arrival_utc,
+                start_fuel_gal=current_start_fuel,
+                brief=leg_brief,
+                point=leg_point,
+                alternate_distance_nm=alternate_distance_nm,
+                alternate_route_label=alternate_route_label,
+                uplift_gal=handoff_policy.uplift_gal,
+                next_start_fuel_gal=handoff_policy.next_start_fuel_gal,
+                has_approach_confirmed=has_approach,
+                legal_alternate=legal_alternate,
+                forecast_quality=quality_checks[0] if quality_checks else None,
+                fuel_stop_rings=fuel_stop_rings,
+                warnings=tuple(warnings),
+            )
+        )
+        leg_margins.append((f"Leg {leg_number}", int(leg_point.reserve_margin_gal)))
+        leg_arrival_fuels.append(float(leg_point.fuel_at_dest))
+        current_departure_dt = leg_timing.arrival + dt.timedelta(minutes=float(ground_minutes))
+        current_start_fuel = handoff_policy.next_start_fuel_gal
+
+    return MultiLegPlan(
+        legs=tuple(legs),
+        final_arrival_utc=final_arrival_utc,
+        leg_reserve_margins_gal=tuple(leg_margins),
+        leg_arrival_fuels_gal=tuple(leg_arrival_fuels),
     )

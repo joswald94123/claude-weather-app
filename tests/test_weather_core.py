@@ -13,7 +13,7 @@ from performance_profiles import (
     get_performance_profile,
     sample_cruise_performance,
 )
-from route_planning import RouteWaypoint, build_route_plan
+from route_planning import RouteWaypoint, build_route_plan, split_route_plan_at_fuel_stops
 from weather_core import (
     _along_track_ground_speed,
     _estimate_wind_components,
@@ -2675,3 +2675,58 @@ def test_vertical_profile_paints_gairmet_beyond_horizon_like_the_table():
 
     assert vertical_profile.hazard_spans
     assert "(latest snapshot beyond forecast horizon)" in vertical_profile.hazard_spans[0].source
+
+
+def test_build_multi_leg_plan_chains_fuel_timing_and_alternates():
+    """Golden two-leg mission: fuel handoff, ground-time chaining, and per-leg policy."""
+
+    weather = fetch_noaa_weather(["KSTS"], session=_BrokenSession())  # type: ignore[arg-type]
+    departure = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    destination = AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0)
+    stop = RouteWaypoint(
+        identifier="KBFL",
+        latitude=35.4336,
+        longitude=-119.0568,
+        waypoint_type="Airport",
+        source="test",
+        is_fuel_stop=True,
+    )
+    segments = split_route_plan_at_fuel_stops(build_route_plan(departure, destination, [stop]))
+    assert len(segments) == 2
+
+    plan = weather_core.build_multi_leg_plan(
+        fuel_stop_segments=segments,
+        departure_dt=dt.datetime(2026, 7, 21, 10, 0, tzinfo=dt.timezone.utc),
+        start_fuel_gal=292.0,
+        ground_minutes=45.0,
+        uplifts={"KBFL": 80.0},
+        alternates={},
+        mission_alternate_code=None,
+        mission_alternate_distance_nm=0.0,
+        mission_alternate_route_label="",
+        approach_confirmed_icaos={"KBFL"},
+        destination_has_approach=True,
+        departure_fallback_timezone="US/Pacific",
+        destination_fallback_timezone="US/Arizona",
+        weather=weather,
+        usable_fuel_capacity_gal=292.0,
+        focus_flight_level=300,
+        mission_brief_kwargs={},
+    )
+
+    assert len(plan.legs) == 2
+    first, second = plan.legs
+    assert not first.is_final_leg
+    assert second.is_final_leg
+    assert (second.departure_utc - first.arrival_utc) == dt.timedelta(minutes=45)
+    # Landing fuel plus the 80-gal uplift exceeds the tank, so the handoff trims
+    # to usable capacity and says so.
+    assert first.point.fuel_at_dest + 80.0 > 292.0
+    assert second.start_fuel_gal == pytest.approx(292.0)
+    assert first.uplift_gal == 80.0
+    assert any("trimmed" in warning for warning in first.warnings)
+    assert plan.final_arrival_utc == second.arrival_utc
+    assert plan.leg_reserve_margins_gal[0][0] == "Leg 1"
+    assert plan.leg_arrival_fuels_gal[-1] == float(second.point.fuel_at_dest)
+    assert first.has_approach_confirmed is True
+    assert first.alternate_route_label == "Not specified — alternate fuel excluded"

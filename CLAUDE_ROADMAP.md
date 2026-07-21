@@ -38,9 +38,14 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   sign legend; dead helpers deleted.
 
 ## Phase 3 — structural convergence (FIX-09 → brief-as-document)
-1. FIX-09: extract the fuel-stop orchestration engine into core
-   (`build_multi_leg_plan` returning a frozen result); UI renders only;
-   golden two-stop scenario tests; "no mission arithmetic in the UI layer" rule.
+1. FIX-09 core extraction — PARTIAL (v.25): `weather_core.build_multi_leg_plan`
+   computes every chained leg (fuel handoff, timing, alternates, legal/quality,
+   stop rings, warnings-as-data) into frozen MissionLegPlan/MultiLegPlan; the
+   UI fuel-stop section is now one engine call plus rendering; golden two-leg
+   test covers chaining, capacity trim, and policy. Remaining FIX-09 items:
+   internalize the westbound-swap convention and the windtemp refetch decision,
+   sweep residual UI arithmetic (lb-gal conversion, focus-FL fallback), AppTest
+   value-equality guardrail, and the written no-UI-arithmetic rule.
 2. `FuelLedger` typed value object carrying the full fuel derivation
    (start → taxi → phases → FOB → requirement components → margin) consumed by
    every fuel surface.
