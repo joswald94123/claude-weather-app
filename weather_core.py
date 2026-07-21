@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import math
 import os
 import re
@@ -24,6 +25,7 @@ from performance_profiles import (
     sample_descent_rows,
 )
 from route_planning import (
+    MissionHeadline,
     RouteFuelSegment,
     RoutePlan,
     RouteWaypoint,
@@ -32,9 +34,11 @@ from route_planning import (
     great_circle_distance_nm as _route_great_circle_distance_nm,
     initial_track_deg as _route_initial_track_deg,
     resolve_fuel_stop_leg_policy,
+    resolve_mission_headline,
     route_midpoint_lat_lon,
     route_point_at_distance_nm as _route_plan_point_at_distance_nm,
     route_track_at_distance_nm as _route_plan_track_at_distance_nm,
+    split_route_plan_at_fuel_stops,
 )
 
 DEFAULT_LAT = 39.8283
@@ -5863,4 +5867,199 @@ def build_multi_leg_plan(
         final_arrival_utc=final_arrival_utc,
         leg_reserve_margins_gal=tuple(leg_margins),
         leg_arrival_fuels_gal=tuple(leg_arrival_fuels),
+    )
+
+
+@dataclass(frozen=True)
+class MissionBriefDocument:
+    """One immutable computed mission: every number the UI renders, no UI arithmetic.
+
+    The document is assembled by build_mission_brief_document in a single pass so
+    rendering surfaces cannot recompute or disagree with each other.
+    """
+
+    wind_model: RouteWindModel | None
+    brief: MissionBrief
+    route_hazards_by_fl: dict[int, list[SegmentHazard]]
+    focus_flight_level: int
+    focus_point: MissionPoint | None
+    nonstop_focus_eta_utc: dt.datetime | None
+    fuel_stop_segments: tuple[RouteFuelSegment, ...]
+    multi_leg_plan: MultiLegPlan | None
+    mission_arrival_eta_utc: dt.datetime | None
+    mission_headline: "MissionHeadline"
+    legal_alternate: LegalAlternateAssessment
+    forecast_quality_checks: tuple[ForecastQualityCheck, ...]
+    risk_summary: MissionRiskSummary
+
+
+def build_mission_brief_document(
+    *,
+    departure: AirportData,
+    destination: AirportData,
+    weather: NoaaWeather,
+    route_plan: RoutePlan | None,
+    departure_dt: dt.datetime,
+    departure_date: dt.date,
+    departure_time_local: dt.time,
+    start_fuel_gal: float,
+    flight_levels: list[int],
+    selected_flight_level: int | None,
+    preview_flight_level: int,
+    ground_minutes: float,
+    uplifts: dict[str, float],
+    alternates: dict[str, str],
+    mission_alternate_code: str | None,
+    mission_alternate_distance_nm: float,
+    mission_alternate_route_label: str,
+    approach_confirmed_icaos: set[str],
+    destination_has_approach: bool,
+    forecast_phase_airports: dict[str, str],
+    usable_fuel_capacity_gal: float | None,
+    thresholds: MissionRiskThresholds | None,
+    mission_brief_kwargs: dict[str, object],
+    stop_ring_kwargs: dict[str, object] | None = None,
+) -> MissionBriefDocument:
+    """Assemble the complete mission document: winds, brief, hazards, legs, and risk.
+
+    mission_brief_kwargs carries the performance/reserve settings shared by the
+    nonstop brief, the hazard evaluation (which takes the applicable subset), and
+    every chained leg.
+    """
+
+    wind_model = build_route_wind_model(
+        departure,
+        destination,
+        weather.windtemps,
+        route_plan=route_plan,
+    )
+    if stop_ring_kwargs is not None and stop_ring_kwargs.get("wind_model") is None:
+        # Stop rings sample the mission-wide wind field, which only exists here.
+        stop_ring_kwargs = {**stop_ring_kwargs, "wind_model": wind_model}
+    brief = build_mission_brief(
+        departure,
+        destination,
+        departure_date=departure_date,
+        departure_time_local=departure_time_local,
+        derive_direction=True,
+        start_fuel_gal=int(start_fuel_gal),
+        alternate_distance_nm=float(mission_alternate_distance_nm),
+        wind_model=wind_model,
+        flight_levels=flight_levels,
+        route_plan=route_plan,
+        **mission_brief_kwargs,
+    )
+    hazard_parameter_names = set(inspect.signature(evaluate_route_hazards).parameters)
+    route_hazards_by_fl = evaluate_route_hazards(
+        departure,
+        destination,
+        hazard_areas=weather.hazard_areas,
+        reference_time_utc=departure_dt.astimezone(dt.timezone.utc),
+        flight_levels=flight_levels,
+        wind_model=wind_model,
+        route_plan=route_plan,
+        **{
+            key: value
+            for key, value in mission_brief_kwargs.items()
+            if key in hazard_parameter_names
+        },
+    )
+
+    focus_flight_level = (
+        selected_flight_level if selected_flight_level in flight_levels else preview_flight_level
+    )
+    focus_point = next(
+        (point for point in brief.points if point.flight_level == f"FL{focus_flight_level}"),
+        None,
+    )
+    if focus_point is None and brief.points:
+        focus_point = brief.points[0]
+        parsed_level = str(focus_point.flight_level).replace("FL", "")
+        focus_flight_level = int(parsed_level) if parsed_level.isdigit() else flight_levels[0]
+
+    nonstop_focus_eta_utc = (
+        (departure_dt + dt.timedelta(hours=float(focus_point.airborne_hours))).astimezone(dt.timezone.utc)
+        if focus_point is not None
+        else None
+    )
+    mission_arrival_eta_utc = nonstop_focus_eta_utc
+
+    fuel_stop_segments: tuple[RouteFuelSegment, ...] = (
+        split_route_plan_at_fuel_stops(route_plan)
+        if route_plan is not None
+        and any(getattr(waypoint, "is_fuel_stop", False) for waypoint in route_plan.waypoints)
+        else ()
+    )
+    multi_leg_plan: MultiLegPlan | None = None
+    if fuel_stop_segments:
+        multi_leg_plan = build_multi_leg_plan(
+            fuel_stop_segments=fuel_stop_segments,
+            departure_dt=departure_dt,
+            start_fuel_gal=float(start_fuel_gal),
+            ground_minutes=float(ground_minutes),
+            uplifts=uplifts,
+            alternates=alternates,
+            mission_alternate_code=mission_alternate_code,
+            mission_alternate_distance_nm=float(mission_alternate_distance_nm),
+            mission_alternate_route_label=mission_alternate_route_label,
+            approach_confirmed_icaos=approach_confirmed_icaos,
+            destination_has_approach=destination_has_approach,
+            departure_fallback_timezone=departure.timezone,
+            destination_fallback_timezone=destination.timezone,
+            weather=weather,
+            usable_fuel_capacity_gal=usable_fuel_capacity_gal,
+            focus_flight_level=focus_flight_level,
+            mission_brief_kwargs=mission_brief_kwargs,
+            stop_ring_kwargs=stop_ring_kwargs,
+        )
+        mission_arrival_eta_utc = multi_leg_plan.final_arrival_utc
+
+    legal_alternate = evaluate_legal_alternate_requirement(
+        weather=weather,
+        destination_icao=destination.icao,
+        eta_utc=mission_arrival_eta_utc,
+        has_destination_approach=destination_has_approach,
+    )
+    forecast_quality_checks = tuple(
+        evaluate_terminal_forecast_quality(
+            weather=weather,
+            phase_airports=forecast_phase_airports,
+        )
+    )
+
+    mission_headline = resolve_mission_headline(
+        nonstop_reserve_margin_gal=int(focus_point.reserve_margin_gal) if focus_point else 0,
+        nonstop_fob_at_landing_gal=int(focus_point.fuel_at_dest) if focus_point else 0,
+        leg_reserve_margins_gal=(
+            list(multi_leg_plan.leg_reserve_margins_gal) if multi_leg_plan is not None else []
+        ),
+        leg_arrival_fuels_gal=(
+            list(multi_leg_plan.leg_arrival_fuels_gal) if multi_leg_plan is not None else []
+        ),
+    )
+    risk_summary = build_mission_risk_summary(
+        weather=weather,
+        segment_hazards=route_hazards_by_fl.get(focus_flight_level, []),
+        mission_point=focus_point,
+        thresholds=thresholds,
+        reserve_margin_override_gal=(
+            mission_headline.reserve_margin_gal if mission_headline.basis == "multi-leg" else None
+        ),
+        reserve_margin_context=mission_headline.margin_leg_label,
+    )
+
+    return MissionBriefDocument(
+        wind_model=wind_model,
+        brief=brief,
+        route_hazards_by_fl=route_hazards_by_fl,
+        focus_flight_level=focus_flight_level,
+        focus_point=focus_point,
+        nonstop_focus_eta_utc=nonstop_focus_eta_utc,
+        fuel_stop_segments=fuel_stop_segments,
+        multi_leg_plan=multi_leg_plan,
+        mission_arrival_eta_utc=mission_arrival_eta_utc,
+        mission_headline=mission_headline,
+        legal_alternate=legal_alternate,
+        forecast_quality_checks=forecast_quality_checks,
+        risk_summary=risk_summary,
     )

@@ -2857,3 +2857,83 @@ def test_fuel_ledger_identities_and_projection_equality():
     assert point.required_landing_fuel_gal == ledger.effective_requirement_gal
     assert point.reserve_margin_gal == ledger.reserve_margin_gal
     assert point.fuel_status == ledger.fuel_status
+
+
+def _document_test_inputs(route_plan):
+    """Shared kwargs for mission-document assembly tests."""
+
+    return dict(
+        departure=AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0),
+        destination=AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0),
+        weather=fetch_noaa_weather(["KSTS"], session=_BrokenSession()),  # type: ignore[arg-type]
+        route_plan=route_plan,
+        departure_dt=dt.datetime(2026, 7, 21, 10, 0, tzinfo=dt.timezone.utc),
+        departure_date=dt.date(2026, 7, 21),
+        departure_time_local=dt.time(10, 0),
+        start_fuel_gal=292.0,
+        flight_levels=[280, 300],
+        selected_flight_level=300,
+        preview_flight_level=280,
+        ground_minutes=30.0,
+        uplifts={},
+        alternates={},
+        mission_alternate_code=None,
+        mission_alternate_distance_nm=0.0,
+        mission_alternate_route_label="",
+        approach_confirmed_icaos=set(),
+        destination_has_approach=True,
+        forecast_phase_airports={"Departure": "KSTS", "Arrival": "KFFZ"},
+        usable_fuel_capacity_gal=292.0,
+        thresholds=MissionRiskThresholds(),
+        mission_brief_kwargs={},
+    )
+
+
+def test_mission_brief_document_assembles_nonstop_missions():
+    """Verify the one-pass document carries consistent nonstop results."""
+
+    departure = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    destination = AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0)
+    inputs = _document_test_inputs(build_route_plan(departure, destination, []))
+
+    document = weather_core.build_mission_brief_document(**inputs)
+
+    assert document.focus_flight_level == 300
+    assert document.focus_point is not None
+    assert document.focus_point.flight_level == "FL300"
+    assert document.multi_leg_plan is None
+    assert document.fuel_stop_segments == ()
+    assert document.mission_headline.basis == "nonstop"
+    assert document.mission_arrival_eta_utc == document.nonstop_focus_eta_utc
+    assert set(document.route_hazards_by_fl) == {280, 300}
+    assert document.mission_headline.fob_at_landing_gal == document.focus_point.fuel_at_dest
+    assert document.legal_alternate.label
+    assert document.risk_summary.label
+
+
+def test_mission_brief_document_assembles_two_stop_missions():
+    """Verify the document chains legs and keeps the headline on the planned mission."""
+
+    departure = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    destination = AirportData("KFFZ", 33.4608, -111.7280, "US/Arizona", "test", elevation_ft=1394.0)
+    stop = RouteWaypoint(
+        identifier="KBFL",
+        latitude=35.4336,
+        longitude=-119.0568,
+        waypoint_type="Airport",
+        source="test",
+        is_fuel_stop=True,
+    )
+    inputs = _document_test_inputs(build_route_plan(departure, destination, [stop]))
+
+    document = weather_core.build_mission_brief_document(**inputs)
+
+    assert len(document.fuel_stop_segments) == 2
+    assert document.multi_leg_plan is not None
+    assert len(document.multi_leg_plan.legs) == 2
+    assert document.mission_headline.basis == "multi-leg"
+    assert document.mission_arrival_eta_utc == document.multi_leg_plan.final_arrival_utc
+    assert document.mission_arrival_eta_utc != document.nonstop_focus_eta_utc
+    assert document.mission_headline.fob_at_landing_gal == round(
+        document.multi_leg_plan.leg_arrival_fuels_gal[-1]
+    )

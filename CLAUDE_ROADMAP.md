@@ -59,8 +59,13 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
    `build_fuel_ledger`; every MissionPoint fuel field is a projection of it,
    invariant-tested, asserted per leg in the multi-leg golden test, and the
    fuel-audit caption now shows the burn composition.
-3. `MissionBriefDocument`: one immutable computed document per run (all legs,
-   FLs, hazards, provenance); enables a printable nav log.
+3. DONE (v.32) `MissionBriefDocument`: one immutable document per run — wind
+   model, brief, hazards-by-FL, focus resolution, fuel-stop legs, chained ETA,
+   headline, legal-alternate, forecast quality, and risk computed in a single
+   core pass (`build_mission_brief_document`); the UI compute pipeline is one
+   call, the signature-introspection compat shims are deleted, and nonstop +
+   two-stop assembly goldens pin consistency. (Printable nav log: future,
+   trivial now that the document exists.) Fuel-stop ground time defaults 30 min.
 4. Feed adapters with recorded live-response fixtures and contract tests.
 5. `Sourced[T]` provenance wrapper (value, source, issue time, validity,
    fallback flag) rendered generically.

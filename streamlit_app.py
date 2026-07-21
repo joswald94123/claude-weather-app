@@ -87,13 +87,9 @@ from weather_core import (  # noqa: E402
     MissionRiskThresholds,
     build_alternate_range_rings,
     build_mission_brief,
-    build_mission_risk_summary,
-    build_multi_leg_plan,
+    build_mission_brief_document,
     build_route_vertical_profile,
     cruise_flight_levels_for_direction,
-    evaluate_legal_alternate_requirement,
-    evaluate_terminal_forecast_quality,
-    evaluate_route_hazards,
     fetch_noaa_weather,
     get_airport_data,
     hazard_label,
@@ -159,7 +155,6 @@ except Exception:
         return None
 
 _BUILD_MISSION_BRIEF_PARAMS = set(inspect.signature(build_mission_brief).parameters.keys())
-_EVALUATE_ROUTE_HAZARDS_PARAMS = set(inspect.signature(evaluate_route_hazards).parameters.keys())
 _SUPPORTS_EXTENDED_PERF_INPUTS = {
     "cruise_tas_kts",
     "climb_ias_kts",
@@ -702,18 +697,6 @@ def _build_route_hero(
     )
 
 
-def _find_brief_point(brief: object, flight_level: int) -> object | None:
-    """Find the mission-brief row for a selected numeric flight level."""
-
-    return next(
-        (
-            point
-            for point in getattr(brief, "points", [])
-            if getattr(point, "flight_level", "") == f"FL{flight_level}"
-        ),
-        None,
-    )
-
 
 def _build_waypoint_range_rings(
     *,
@@ -773,135 +756,6 @@ def _highlight_focus_row(row: pd.Series, focus_flight_level_text: str) -> list[s
         ]
     return ["" for _ in row]
 
-
-def _build_mission_brief_compatible(
-    departure: AirportData,
-    destination: AirportData,
-    *,
-    departure_date: dt.date,
-    departure_time_local: dt.time,
-    is_return_leg: bool,
-    start_fuel_gal: int,
-    fixed_fuel_gal_override: float | None,
-    climb_rate_fpm: int,
-    descent_rate_fpm: int,
-    cruise_tas_kts: int,
-    climb_ias_kts: int,
-    descent_ias_kts: int,
-    performance_profile: object | None,
-    cruise_mode_id: str | None,
-    climb_schedule_id: str | None,
-    upper_climb_schedule_id: str | None,
-    climb_transition_altitude_ft: float | None,
-    descent_profile_id: str | None,
-    descent_profile_rate_fpm: int | None,
-    cruise_weight_lb: float | None,
-    climb_weight_lb: float | None,
-    alternate_distance_nm: float,
-    reserve_minutes: float,
-    landing_minimum_gal: float,
-    reserve_floor_gal: float | None,
-    wind_model: object | None,
-    flight_levels: list[int],
-    route_plan: object | None,
-):
-    """Call build_mission_brief with only parameters supported by the loaded core."""
-
-    kwargs = {
-        "departure_date": departure_date,
-        "departure_time_local": departure_time_local,
-        "is_return_leg": is_return_leg,
-        "start_fuel_gal": start_fuel_gal,
-        "fixed_fuel_gal_override": fixed_fuel_gal_override,
-        "climb_rate_fpm": climb_rate_fpm,
-        "descent_rate_fpm": descent_rate_fpm,
-        "cruise_tas_kts": cruise_tas_kts,
-        "climb_ias_kts": climb_ias_kts,
-        "descent_ias_kts": descent_ias_kts,
-        "performance_profile": performance_profile,
-        "cruise_mode_id": cruise_mode_id,
-        "climb_schedule_id": climb_schedule_id,
-        "upper_climb_schedule_id": upper_climb_schedule_id,
-        "climb_transition_altitude_ft": climb_transition_altitude_ft,
-        "descent_profile_id": descent_profile_id,
-        "descent_profile_rate_fpm": descent_profile_rate_fpm,
-        "cruise_weight_lb": cruise_weight_lb,
-        "climb_weight_lb": climb_weight_lb,
-        "alternate_distance_nm": alternate_distance_nm,
-        "reserve_minutes": reserve_minutes,
-        "landing_minimum_gal": landing_minimum_gal,
-        "reserve_floor_gal": reserve_floor_gal,
-        "wind_model": wind_model,
-        "flight_levels": flight_levels,
-        "route_plan": route_plan,
-    }
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k in _BUILD_MISSION_BRIEF_PARAMS}
-    dropped = sorted(key for key, value in kwargs.items() if key not in filtered_kwargs and value is not None)
-    if dropped:
-        st.warning(f"Loaded mission core does not support: {', '.join(dropped)}. Those inputs were not applied.")
-    try:
-        return build_mission_brief(departure, destination, **filtered_kwargs)
-    except Exception as exc:
-        st.error(f"Mission calculation failed: {exc}. Review the inputs, then retry or refresh the app.")
-        st.stop()
-
-
-def _evaluate_route_hazards_compatible(
-    departure: AirportData,
-    destination: AirportData,
-    *,
-    hazard_areas: object,
-    reference_time_utc: dt.datetime,
-    flight_levels: list[int],
-    climb_rate_fpm: int,
-    descent_rate_fpm: int,
-    cruise_tas_kts: int,
-    climb_ias_kts: int,
-    descent_ias_kts: int,
-    performance_profile: object | None,
-    cruise_mode_id: str | None,
-    climb_schedule_id: str | None,
-    upper_climb_schedule_id: str | None,
-    climb_transition_altitude_ft: float | None,
-    descent_profile_id: str | None,
-    descent_profile_rate_fpm: int | None,
-    cruise_weight_lb: float | None,
-    climb_weight_lb: float | None,
-    wind_model: object | None,
-    route_plan: object | None,
-):
-    """Call evaluate_route_hazards with only parameters supported by the loaded core."""
-
-    kwargs = {
-        "hazard_areas": hazard_areas,
-        "reference_time_utc": reference_time_utc,
-        "flight_levels": flight_levels,
-        "climb_rate_fpm": climb_rate_fpm,
-        "descent_rate_fpm": descent_rate_fpm,
-        "cruise_tas_kts": cruise_tas_kts,
-        "climb_ias_kts": climb_ias_kts,
-        "descent_ias_kts": descent_ias_kts,
-        "performance_profile": performance_profile,
-        "cruise_mode_id": cruise_mode_id,
-        "climb_schedule_id": climb_schedule_id,
-        "upper_climb_schedule_id": upper_climb_schedule_id,
-        "climb_transition_altitude_ft": climb_transition_altitude_ft,
-        "descent_profile_id": descent_profile_id,
-        "descent_profile_rate_fpm": descent_profile_rate_fpm,
-        "cruise_weight_lb": cruise_weight_lb,
-        "climb_weight_lb": climb_weight_lb,
-        "wind_model": wind_model,
-        "route_plan": route_plan,
-    }
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k in _EVALUATE_ROUTE_HAZARDS_PARAMS}
-    dropped = sorted(key for key, value in kwargs.items() if key not in filtered_kwargs and value is not None)
-    if dropped:
-        st.warning(f"Loaded hazard core does not support: {', '.join(dropped)}. Those inputs were not applied.")
-    try:
-        return evaluate_route_hazards(departure, destination, **filtered_kwargs)
-    except Exception as exc:
-        st.error(f"Route-hazard calculation failed: {exc}. Refresh weather or adjust the route and retry.")
-        st.stop()
 
 
 class _UncacheableNoaaResult(RuntimeError):
@@ -1356,7 +1210,7 @@ with st.sidebar:
     fuel_stop_ground_minutes = st.number_input(
         "Fuel Stop Ground Time (min)",
         min_value=0.0,
-        value=45.0,
+        value=30.0,
         step=5.0,
         help="Added between fuel-stop legs when segment ETDs and ETAs are shown.",
     )
@@ -2097,22 +1951,9 @@ with st.spinner("Recalculating..."):
                 departure_time.strftime("%H:%M"),
                 _APP_RELEASE,
             )
-    route_wind_model = build_route_wind_model(
-        departure_airport,
-        destination_airport,
-        weather.windtemps,
-        route_plan=route_plan,
-    )
-
-    # Direction ownership lives in the core: it derives westbound from the
-    # longitudes and swaps internally, so the UI never pre-swaps endpoints.
-    brief = _build_mission_brief_compatible(
-        departure_airport,
-        destination_airport,
-        departure_date=departure_date,
-        departure_time_local=departure_time,
-        derive_direction=True,
-        start_fuel_gal=int(start_fuel),
+    # The mission is computed as one immutable document; everything below renders
+    # its fields and performs no mission arithmetic of its own.
+    mission_performance_kwargs = dict(
         fixed_fuel_gal_override=float(startup_taxi_fuel),
         climb_rate_fpm=int(climb_rate_fpm),
         descent_rate_fpm=int(descent_rate_fpm),
@@ -2128,38 +1969,60 @@ with st.spinner("Recalculating..."):
         descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
         cruise_weight_lb=active_cruise_weight_lb_for_calc,
         climb_weight_lb=active_climb_weight_lb_for_calc,
-        alternate_distance_nm=float(alternate_distance_nm),
         reserve_minutes=float(reserve_minutes),
         landing_minimum_gal=float(landing_minimum),
         reserve_floor_gal=float(reserve_floor_gal) if reserve_floor_gal > 0 else None,
-        wind_model=route_wind_model,
-        flight_levels=available_flight_levels,
-        route_plan=route_plan,
     )
-
-    route_hazards_by_fl = _evaluate_route_hazards_compatible(
-        departure_airport,
-        destination_airport,
-        hazard_areas=weather.hazard_areas,
-        reference_time_utc=selected_etd.astimezone(dt.timezone.utc),
-        flight_levels=available_flight_levels,
-        climb_rate_fpm=int(climb_rate_fpm),
-        descent_rate_fpm=int(descent_rate_fpm),
-        cruise_tas_kts=int(cruise_tas_kts),
-        climb_ias_kts=int(climb_ias_kts),
-        descent_ias_kts=int(descent_ias_kts),
-        performance_profile=active_performance_profile_for_calc,
-        cruise_mode_id=active_cruise_mode_id_for_calc,
-        climb_schedule_id=active_climb_schedule_id_for_calc,
-        upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
-        climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
-        descent_profile_id=active_descent_profile_id_for_calc,
-        descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-        cruise_weight_lb=active_cruise_weight_lb_for_calc,
-        climb_weight_lb=active_climb_weight_lb_for_calc,
-        wind_model=route_wind_model,
-        route_plan=route_plan,
-    )
+    try:
+        mission_document = build_mission_brief_document(
+            departure=departure_airport,
+            destination=destination_airport,
+            weather=weather,
+            route_plan=route_plan,
+            departure_dt=selected_etd,
+            departure_date=departure_date,
+            departure_time_local=departure_time,
+            start_fuel_gal=float(start_fuel),
+            flight_levels=available_flight_levels,
+            selected_flight_level=selected_cruise_fl,
+            preview_flight_level=preview_flight_level,
+            ground_minutes=float(fuel_stop_ground_minutes),
+            uplifts=fuel_stop_uplifts,
+            alternates=fuel_stop_alternates,
+            mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
+            mission_alternate_distance_nm=float(alternate_distance_nm),
+            mission_alternate_route_label=(
+                alternate_route_plan.route_text if alternate_route_plan is not None else ""
+            ),
+            approach_confirmed_icaos=fuel_stop_approach_airports,
+            destination_has_approach=bool(destination_has_approach),
+            forecast_phase_airports={
+                "Departure": departure_airport.icao,
+                "Arrival": destination_airport.icao,
+                **({"Alternate": alternate_airport.icao} if alternate_airport is not None else {}),
+            },
+            usable_fuel_capacity_gal=MAX_USABLE_FUEL_GAL,
+            thresholds=mission_risk_thresholds,
+            mission_brief_kwargs=mission_performance_kwargs,
+            stop_ring_kwargs=dict(
+                performance_profile=active_performance_profile_for_calc,
+                cruise_mode_id=active_cruise_mode_id_for_calc,
+                climb_schedule_id=active_climb_schedule_id_for_calc,
+                descent_profile_id=active_descent_profile_id_for_calc,
+                descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
+                cruise_weight_lb=active_cruise_weight_lb_for_calc,
+                climb_weight_lb=active_climb_weight_lb_for_calc,
+                # The builder injects its mission-wide wind model here.
+                wind_model=None,
+                alt_missed_approach_fuel_gal=float(missed_approach_fuel),
+            ),
+        )
+    except (ValueError, TypeError, KeyError) as exc:
+        st.error(f"Mission calculations failed: {exc}")
+        st.stop()
+    route_wind_model = mission_document.wind_model
+    brief = mission_document.brief
+    route_hazards_by_fl = mission_document.route_hazards_by_fl
 
 if route_wind_model is None:
     wind_source_status = "Heuristic fallback"
@@ -2213,13 +2076,8 @@ weather_age_minutes = (
 )
 
 route_direction = "Westbound" if "Westbound" in brief.direction_label else "Eastbound"
-focus_flight_level = (
-    selected_cruise_fl if selected_cruise_fl in available_flight_levels else preview_flight_level
-)
-focus_point = _find_brief_point(brief, focus_flight_level)
-if focus_point is None and brief.points:
-    focus_point = brief.points[0]
-    focus_flight_level = _parse_flight_level_number(focus_point.flight_level) or available_flight_levels[0]
+focus_flight_level = mission_document.focus_flight_level
+focus_point = mission_document.focus_point
 focus_flight_level_text = f"FL{focus_flight_level}"
 focus_segment_hazards = route_hazards_by_fl.get(focus_flight_level, [])
 focus_overall_score = _max_hazard_score(focus_segment_hazards, "overall_score")
@@ -2233,95 +2091,17 @@ focus_required_landing_fuel = int(getattr(focus_point, "required_landing_fuel_ga
 focus_reserve_margin = int(getattr(focus_point, "reserve_margin_gal", 0)) if focus_point else 0
 focus_fuel_status = str(getattr(focus_point, "fuel_status", "Unknown")) if focus_point else "Unknown"
 focus_impacted_segments = _count_impacted_segments(focus_segment_hazards)
-focus_eta_utc = (
-    (selected_etd + dt.timedelta(hours=float(getattr(focus_point, "airborne_hours", 0.0)))).astimezone(
-        dt.timezone.utc
-    )
-    if focus_point is not None
-    else None
-)
-mission_arrival_eta_utc = focus_eta_utc
-legal_alternate_assessment = evaluate_legal_alternate_requirement(
-    weather=weather,
-    destination_icao=destination_airport.icao,
-    eta_utc=focus_eta_utc,
-    has_destination_approach=bool(destination_has_approach),
-)
-forecast_quality_checks = evaluate_terminal_forecast_quality(
-    weather=weather,
-    phase_airports={
-        "Departure": departure_airport.icao,
-        "Arrival": destination_airport.icao,
-        **({"Alternate": alternate_airport.icao} if alternate_airport is not None else {}),
-    },
-)
-fuel_stop_segments: tuple[RouteFuelSegment, ...] = (
-    split_route_plan_at_fuel_stops(route_plan)
-    if route_plan is not None and any(getattr(waypoint, "is_fuel_stop", False) for waypoint in route_plan.waypoints)
-    else ()
-)
+focus_eta_utc = mission_document.nonstop_focus_eta_utc
+mission_arrival_eta_utc = mission_document.mission_arrival_eta_utc
+legal_alternate_assessment = mission_document.legal_alternate
+forecast_quality_checks = list(mission_document.forecast_quality_checks)
+fuel_stop_segments = mission_document.fuel_stop_segments
 fuel_stop_segment_rows: list[dict[str, object]] = []
 segment_arrival_fuels_gal: list[float] = []
 leg_reserve_margins_gal: list[tuple[str, int]] = []
 range_insets: list[UiRangeInset] = []
-if fuel_stop_segments:
-    leg_invariant_brief_kwargs = dict(
-        fixed_fuel_gal_override=float(startup_taxi_fuel),
-        climb_rate_fpm=int(climb_rate_fpm),
-        descent_rate_fpm=int(descent_rate_fpm),
-        cruise_tas_kts=int(cruise_tas_kts),
-        climb_ias_kts=int(climb_ias_kts),
-        descent_ias_kts=int(descent_ias_kts),
-        performance_profile=active_performance_profile_for_calc,
-        cruise_mode_id=active_cruise_mode_id_for_calc,
-        climb_schedule_id=active_climb_schedule_id_for_calc,
-        upper_climb_schedule_id=active_upper_climb_schedule_id_for_calc,
-        climb_transition_altitude_ft=climb_transition_altitude_ft_for_calc,
-        descent_profile_id=active_descent_profile_id_for_calc,
-        descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-        cruise_weight_lb=active_cruise_weight_lb_for_calc,
-        climb_weight_lb=active_climb_weight_lb_for_calc,
-        reserve_minutes=float(reserve_minutes),
-        landing_minimum_gal=float(landing_minimum),
-        reserve_floor_gal=float(reserve_floor_gal) if reserve_floor_gal > 0 else None,
-    )
-    try:
-        with st.spinner("Planning fuel-stop legs..."):
-            multi_leg_plan = build_multi_leg_plan(
-                fuel_stop_segments=fuel_stop_segments,
-                departure_dt=selected_etd,
-                start_fuel_gal=float(start_fuel),
-                ground_minutes=float(fuel_stop_ground_minutes),
-                uplifts=fuel_stop_uplifts,
-                alternates=fuel_stop_alternates,
-                mission_alternate_code=alternate_airport.icao if alternate_airport is not None else None,
-                mission_alternate_distance_nm=float(alternate_distance_nm),
-                mission_alternate_route_label=(
-                    alternate_route_plan.route_text if alternate_route_plan is not None else ""
-                ),
-                approach_confirmed_icaos=fuel_stop_approach_airports,
-                destination_has_approach=bool(destination_has_approach),
-                departure_fallback_timezone=departure_airport.timezone,
-                destination_fallback_timezone=destination_airport.timezone,
-                weather=weather,
-                usable_fuel_capacity_gal=MAX_USABLE_FUEL_GAL,
-                focus_flight_level=focus_flight_level,
-                mission_brief_kwargs=leg_invariant_brief_kwargs,
-                stop_ring_kwargs=dict(
-                    performance_profile=active_performance_profile_for_calc,
-                    cruise_mode_id=active_cruise_mode_id_for_calc,
-                    climb_schedule_id=active_climb_schedule_id_for_calc,
-                    descent_profile_id=active_descent_profile_id_for_calc,
-                    descent_profile_rate_fpm=active_descent_rate_fpm_for_calc,
-                    cruise_weight_lb=active_cruise_weight_lb_for_calc,
-                    climb_weight_lb=active_climb_weight_lb_for_calc,
-                    wind_model=route_wind_model,
-                    alt_missed_approach_fuel_gal=float(missed_approach_fuel),
-                ),
-            )
-    except (ValueError, TypeError, KeyError) as exc:
-        st.error(f"Fuel-stop planning failed: {exc}")
-        st.stop()
+if mission_document.multi_leg_plan is not None:
+    multi_leg_plan = mission_document.multi_leg_plan
     for leg in multi_leg_plan.legs:
         for leg_warning in leg.warnings:
             st.warning(leg_warning)
@@ -2372,29 +2152,8 @@ if fuel_stop_segments:
         )
     segment_arrival_fuels_gal = list(multi_leg_plan.leg_arrival_fuels_gal)
     leg_reserve_margins_gal = list(multi_leg_plan.leg_reserve_margins_gal)
-    mission_arrival_eta_utc = multi_leg_plan.final_arrival_utc
-    legal_alternate_assessment = evaluate_legal_alternate_requirement(
-        weather=weather,
-        destination_icao=destination_airport.icao,
-        eta_utc=mission_arrival_eta_utc,
-        has_destination_approach=bool(destination_has_approach),
-    )
-mission_headline = resolve_mission_headline(
-    nonstop_reserve_margin_gal=focus_reserve_margin,
-    nonstop_fob_at_landing_gal=focus_fuel_at_dest,
-    leg_reserve_margins_gal=leg_reserve_margins_gal,
-    leg_arrival_fuels_gal=segment_arrival_fuels_gal,
-)
-mission_risk_summary = build_mission_risk_summary(
-    weather=weather,
-    segment_hazards=focus_segment_hazards,
-    mission_point=focus_point,
-    thresholds=mission_risk_thresholds,
-    reserve_margin_override_gal=(
-        mission_headline.reserve_margin_gal if mission_headline.basis == "multi-leg" else None
-    ),
-    reserve_margin_context=mission_headline.margin_leg_label,
-)
+mission_headline = mission_document.mission_headline
+mission_risk_summary = mission_document.risk_summary
 if (
     windtemp_feed_status is not None
     and windtemp_feed_status.valid_to_utc is not None
