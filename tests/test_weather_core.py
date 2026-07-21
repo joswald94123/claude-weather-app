@@ -6,6 +6,7 @@ import threading
 
 import pytest
 import weather_core
+import wxcore.mission
 
 from performance_profiles import (
     DEFAULT_CRUISE_MODE_ID,
@@ -2405,8 +2406,9 @@ def test_descent_bands_sample_touchdown_winds_at_destination_not_tod(monkeypatch
         samples.append((float(altitude_ft), float(sample_latitude)))
         return (0.0, 0.0)
 
-    monkeypatch.setattr(weather_core, "_sample_wind_components_from_model", record_wind_sample)
-    monkeypatch.setattr(weather_core, "_sample_temperature_from_model", lambda **_kwargs: None)
+    # Patch where the integrator resolves these names: the mission module's globals.
+    monkeypatch.setattr(wxcore.mission, "_sample_wind_components_from_model", record_wind_sample)
+    monkeypatch.setattr(wxcore.mission, "_sample_temperature_from_model", lambda **_kwargs: None)
 
     def descent_band(low_ft: int, high_ft: int) -> VerticalPerformanceRow:
         return VerticalPerformanceRow(

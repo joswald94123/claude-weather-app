@@ -1988,6 +1988,9 @@ with st.spinner("Recalculating..."):
     except (ValueError, TypeError, KeyError) as exc:
         st.error(f"Mission calculations failed: {exc}")
         st.stop()
+    # Testability hook: the AppTest guardrail asserts that rendered text equals
+    # these computed fields verbatim. The app never reads this key back.
+    st.session_state["_mission_document_for_tests"] = mission_document
     route_wind_model = mission_document.wind_model
     brief = mission_document.brief
     route_hazards_by_fl = mission_document.route_hazards_by_fl

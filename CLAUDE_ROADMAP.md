@@ -34,8 +34,9 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   integrator dedup, label trio, snapshot --check under pytest); numeric AWC
   severity verified live and >=4 documented High; ISO validTime parser test;
   UI source-contract tests; NASR refresh outage tolerance; clean 3.13
-  pip-compile lock regeneration (backport pins removed). Open deferral: the
-  AppTest value-equality guardrail, blocked on feed fixtures (Phase 3 item 4).
+  pip-compile lock regeneration (backport pins removed). The AppTest
+  value-equality guardrail deferred here shipped in v.35 with the feed
+  fixtures (Phase 3 item 4).
 - DONE (v.23) FIX-05 remainder: spinners over per-leg briefs, destination
   rings, and the vertical profile; widget default+session-state warnings
   removed (cruise, ETD, hazard-detail); ignored per-leg alternate entries
@@ -66,11 +67,22 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
    call, the signature-introspection compat shims are deleted, and nonstop +
    two-stop assembly goldens pin consistency. (Printable nav log: future,
    trivial now that the document exists.) Fuel-stop ground time defaults 30 min.
-4. Feed adapters with recorded live-response fixtures and contract tests.
+4. DONE (v.35) Recorded live-response fixtures + contract tests: unedited AWC
+   captures for all eight feeds in `tests/fixtures/` (sfo+slc FD regions,
+   KSTS/KBFL/KFFZ terminals), served by `tests/feed_fixtures.py`; contract
+   tests pin the wire-format assumptions (types, severities, altitudes,
+   statuses, the empty-CWA valid state). This unblocked the deferred
+   guardrail: AppTest now drives full nonstop and two-leg missions offline
+   (fixture weather + vendored-NASR FAA fallback) and asserts the hero pill
+   and fuel cards render the computed `MissionBriefDocument` verbatim.
 5. `Sourced[T]` provenance wrapper (value, source, issue time, validity,
    fallback flag) rendered generically.
-6. Package split: `weather_core.py` → feeds / wind / performance / mission;
-   `streamlit_app.py` → `main()` + per-tab renderers.
+6. DONE (v.35) Package split: `weather_core.py` (~6,000 lines) → `wxcore/`
+   package with a strict one-way import chain models → geo → feeds → wind →
+   mission; `weather_core.py` remains as an explicit re-export shim so every
+   existing import keeps working. Zero behavior change under the full gate.
+   (Still open from this item: `streamlit_app.py` → `main()` + per-tab
+   renderers.)
 
 ## Working rules
 - The upstream CODEX repo is read-only reference; never push changes there.
