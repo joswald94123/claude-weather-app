@@ -43,6 +43,7 @@ MAX_WIND_STATION_DISTANCE_NM = 300.0
 MULTI_REGION_ROUTE_DISTANCE_NM = 500.0
 CRUISE_BIN_DISTANCE_NM = 75.0
 GAIRMET_SNAPSHOT_HALF_WINDOW = dt.timedelta(hours=1, minutes=30)
+GAIRMET_HORIZON_FALLBACK_LIMIT = dt.timedelta(hours=6)
 TCF_VALIDITY_HALF_WINDOW = dt.timedelta(hours=3)
 PIREP_ALTITUDE_HALF_BAND_FT = 3000
 PIREP_VALID_BEFORE = dt.timedelta(hours=1)
@@ -1840,6 +1841,36 @@ def _latest_gairmet_valid_to_by_source(hazard_areas: list[HazardArea]) -> dict[s
             continue
         latest[area.source] = max(latest.get(area.source, area.valid_to_utc), area.valid_to_utc)
     return latest
+
+
+def hazard_applies_at(
+    hazard: HazardArea,
+    reference_time_utc: dt.datetime | None,
+    latest_gairmet_valid_to_by_source: dict[str, dt.datetime],
+) -> tuple[bool, bool]:
+    """Return (applies, used_horizon_fallback) for one hazard at a reference time.
+
+    Every hazard consumer must share this decision so the segment table and the
+    vertical profile can never disagree. G-AIRMET snapshots stop at the product's
+    forecast horizon; reference times up to GAIRMET_HORIZON_FALLBACK_LIMIT past
+    the last snapshot reuse it (labeled) rather than silently showing clear air.
+    Beyond that limit the product carries no meaningful signal for the time in
+    question, so the hazard is dropped.
+    """
+
+    if _hazard_valid_for_time(hazard, reference_time_utc):
+        return True, False
+    if (
+        reference_time_utc is not None
+        and hazard.source.startswith("G-AIRMET")
+        and hazard.valid_to_utc is not None
+        and hazard.valid_to_utc == latest_gairmet_valid_to_by_source.get(hazard.source)
+        and hazard.valid_to_utc
+        < reference_time_utc
+        <= hazard.valid_to_utc + GAIRMET_HORIZON_FALLBACK_LIMIT
+    ):
+        return True, True
+    return False, False
 
 
 def hazard_label(score: int) -> str:
@@ -4258,14 +4289,10 @@ def evaluate_route_hazards(
 
             # A hazard only counts when time, altitude, and geometry all line up for the segment.
             for area in hazard_areas:
-                use_latest_gairmet = (
-                    segment_reference_time_utc is not None
-                    and area.source.startswith("G-AIRMET")
-                    and area.valid_to_utc is not None
-                    and area.valid_to_utc == latest_gairmet_valid_to.get(area.source)
-                    and segment_reference_time_utc > area.valid_to_utc
+                applies, use_latest_gairmet = hazard_applies_at(
+                    area, segment_reference_time_utc, latest_gairmet_valid_to
                 )
-                if not _hazard_valid_for_time(area, segment_reference_time_utc) and not use_latest_gairmet:
+                if not applies:
                     continue
                 if not _altitude_band_overlaps(
                     band_low_ft=segment_altitude_low_ft,
@@ -4498,8 +4525,10 @@ def build_route_vertical_profile(
         route_plan=route_plan,
     )
     hazard_spans: list[RouteVerticalProfileHazardSpan] = []
+    latest_gairmet_valid_to = _latest_gairmet_valid_to_by_source(hazard_areas)
     for area in hazard_areas:
         intersecting_indexes: list[int] = []
+        area_used_horizon_fallback = False
         for idx, (start_distance_nm, end_distance_nm) in enumerate(zip(breakpoints_nm, breakpoints_nm[1:])):
             midpoint_distance_nm = (start_distance_nm + end_distance_nm) / 2.0
             segment_reference_time_utc = _reference_time_at_distance_utc(
@@ -4508,8 +4537,12 @@ def build_route_vertical_profile(
                 profile=profile,
                 distance_nm=midpoint_distance_nm,
             )
-            if not _hazard_valid_for_time(area, segment_reference_time_utc):
+            applies, used_horizon_fallback = hazard_applies_at(
+                area, segment_reference_time_utc, latest_gairmet_valid_to
+            )
+            if not applies:
                 continue
+            area_used_horizon_fallback = area_used_horizon_fallback or used_horizon_fallback
             if not _route_interval_intersects_polygons(
                 departure_latitude=departure.latitude,
                 departure_longitude=departure.longitude,
@@ -4524,6 +4557,11 @@ def build_route_vertical_profile(
                 continue
             intersecting_indexes.append(idx)
 
+        span_source = (
+            f"{area.source} (latest snapshot beyond forecast horizon)"
+            if area_used_horizon_fallback
+            else area.source
+        )
         for start_idx, end_idx in _group_contiguous_indexes(intersecting_indexes):
             hazard_spans.append(
                 RouteVerticalProfileHazardSpan(
@@ -4533,7 +4571,7 @@ def build_route_vertical_profile(
                     top_ft=int(area.top_ft),
                     start_distance_nm=round(breakpoints_nm[start_idx], 1),
                     end_distance_nm=round(breakpoints_nm[end_idx + 1], 1),
-                    source=area.source,
+                    source=span_source,
                 )
             )
 

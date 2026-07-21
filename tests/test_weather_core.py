@@ -2601,3 +2601,77 @@ def test_forecast_quality_sees_obscured_sky_ceiling():
     assert len(checks) == 1
     assert checks[0].score >= 2
     assert any("Observed ceiling" in reason for reason in checks[0].reasons)
+
+
+def test_hazard_applies_at_shares_the_gairmet_horizon_fallback():
+    """Verify the shared validity decision labels and caps the beyond-horizon fallback."""
+
+    last_snapshot_end = dt.datetime(2026, 7, 20, 18, 0, tzinfo=dt.timezone.utc)
+    footprint = [[(32.0, -124.5), (40.5, -124.5), (40.5, -115.0), (32.0, -115.0)]]
+    area = HazardArea(
+        hazard_type="icing",
+        severity_score=2,
+        base_ft=8000,
+        top_ft=20000,
+        polygons=footprint,
+        source="G-AIRMET SIERRA 1",
+        valid_from_utc=last_snapshot_end - dt.timedelta(hours=3),
+        valid_to_utc=last_snapshot_end,
+    )
+    stale = HazardArea(
+        hazard_type="icing",
+        severity_score=2,
+        base_ft=8000,
+        top_ft=20000,
+        polygons=footprint,
+        source="G-AIRMET SIERRA 1",
+        valid_from_utc=last_snapshot_end - dt.timedelta(hours=6),
+        valid_to_utc=last_snapshot_end - dt.timedelta(hours=3),
+    )
+    latest = {"G-AIRMET SIERRA 1": last_snapshot_end}
+
+    inside_window = weather_core.hazard_applies_at(area, last_snapshot_end - dt.timedelta(hours=1), latest)
+    beyond_horizon = weather_core.hazard_applies_at(area, last_snapshot_end + dt.timedelta(hours=3), latest)
+    beyond_cap = weather_core.hazard_applies_at(area, last_snapshot_end + dt.timedelta(hours=7), latest)
+    stale_snapshot = weather_core.hazard_applies_at(stale, last_snapshot_end + dt.timedelta(hours=1), latest)
+
+    assert inside_window == (True, False)
+    assert beyond_horizon == (True, True)
+    assert beyond_cap == (False, False)
+    assert stale_snapshot == (False, False)
+
+
+def test_vertical_profile_paints_gairmet_beyond_horizon_like_the_table():
+    """Verify the side profile shows the labeled beyond-horizon G-AIRMET the table shows."""
+
+    dep = AirportData("KSTS", 38.5089, -122.8130, "US/Pacific", "test", elevation_ft=129.0)
+    arr = AirportData("KPSP", 33.8297, -116.5070, "US/Pacific", "test", elevation_ft=477.0)
+    reference_time = dt.datetime(2026, 3, 7, 18, 45, tzinfo=dt.timezone.utc)
+    beyond_horizon_area = HazardArea(
+        hazard_type="turbulence",
+        severity_score=2,
+        base_ft=24000,
+        top_ft=36000,
+        polygons=[
+            [
+                (32.0, -124.5),
+                (40.5, -124.5),
+                (40.5, -115.0),
+                (32.0, -115.0),
+            ]
+        ],
+        source="G-AIRMET TANGO 5",
+        valid_from_utc=reference_time - dt.timedelta(hours=5),
+        valid_to_utc=reference_time - dt.timedelta(hours=2),
+    )
+
+    vertical_profile = build_route_vertical_profile(
+        dep,
+        arr,
+        hazard_areas=[beyond_horizon_area],
+        reference_time_utc=reference_time,
+        flight_level=310,
+    )
+
+    assert vertical_profile.hazard_spans
+    assert "(latest snapshot beyond forecast horizon)" in vertical_profile.hazard_spans[0].source
