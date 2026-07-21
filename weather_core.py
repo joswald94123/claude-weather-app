@@ -1568,7 +1568,11 @@ def _risk_score_from_severity(value: object, *, min_score: int = 1) -> int:
         return min(max(score, 0), 3)
 
     if isinstance(value, (int, float)):
-        if value >= 5:
+        # AWC numeric coding observed live 2026-07-20: convective SIGMETs carry
+        # severity=5 (High). A 4 has not been observed on the wire; SIGMET-class
+        # products are inherently significant, so >=4 is treated as High rather
+        # than risking a severe advisory scoring Moderate.
+        if value >= 4:
             score = max(score, 3)
         elif value >= 3:
             score = max(score, 2)

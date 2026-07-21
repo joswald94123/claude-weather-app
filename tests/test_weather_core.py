@@ -2794,3 +2794,13 @@ def test_gairmet_iso_valid_time_builds_the_snapshot_window():
     assert len(areas) == 1
     assert areas[0].valid_from_utc == snapshot - weather_core.GAIRMET_SNAPSHOT_HALF_WINDOW
     assert areas[0].valid_to_utc == snapshot + weather_core.GAIRMET_SNAPSHOT_HALF_WINDOW
+
+
+@pytest.mark.parametrize(
+    ("numeric_severity", "expected_score"),
+    [(5, 3), (4, 3), (3, 2), (1, 1)],
+)
+def test_numeric_severity_coding_matches_observed_awc_values(numeric_severity, expected_score):
+    """Verify the documented numeric severity mapping, with >=4 conservatively High."""
+
+    assert weather_core._risk_score_from_severity(numeric_severity) == expected_score

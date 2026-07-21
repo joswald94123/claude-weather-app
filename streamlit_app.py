@@ -1570,7 +1570,11 @@ with st.sidebar:
             value=10000,
             step=1000,
             key="performance_climb_transition_altitude_ft",
-            help="The initial schedule applies below this altitude; the upper schedule applies at and above it.",
+            help=(
+                "The initial schedule applies below this altitude; the upper schedule "
+                "applies at and above it. Treated as pressure altitude against the PIM "
+                "climb tables."
+            ),
         )
     )
 
@@ -1702,7 +1706,11 @@ with st.sidebar:
                 index=list(CRUISE_WEIGHTS_LB).index(active_performance_profile.cruise_weight_lb),
                 format_func=lambda weight: f"{int(weight):,} lb",
                 key="performance_cruise_weight_lb",
-                help="Published Daher cruise-table weight used for TAS and cruise fuel interpolation.",
+                help=(
+                "Published Daher cruise-table weight used for IAS/TAS interpolation. "
+                "The PIM shares one fuel-flow column across weights, so weight changes "
+                "fuel per mile (via TAS), not gallons per hour."
+            ),
             )
         )
         selected_climb_weight_lb = int(
@@ -2851,7 +2859,9 @@ with mission_tab:
             column_config={
                 "Start Fuel": st.column_config.NumberColumn("Start Fuel", format="%d gal"),
                 "Distance": st.column_config.NumberColumn("Distance", format="%d NM"),
-                "Fuel Burn": st.column_config.NumberColumn("Fuel Burn", format="%d gal"),
+                "Fuel Burn": st.column_config.NumberColumn(
+                    "Fuel Burn", format="%d gal", help="Block fuel including startup/taxi."
+                ),
                 "Fuel at Landing": st.column_config.NumberColumn("Fuel at Landing", format="%d gal"),
                 "Next Start Fuel": st.column_config.NumberColumn("Next Start Fuel", format="%d gal"),
                 "Alt Dist": st.column_config.NumberColumn("Alt Dist", format="%d NM"),
@@ -2901,7 +2911,9 @@ with mission_tab:
         hide_index=True,
         width="stretch",
         column_config={
-            "Fuel Burn": st.column_config.NumberColumn("Fuel Burn", format="%d gal"),
+            "Fuel Burn": st.column_config.NumberColumn(
+                "Fuel Burn", format="%d gal", help="Block fuel including startup/taxi."
+            ),
             "FOB at Landing": st.column_config.NumberColumn("FOB at Landing", format="%d gal"),
             "Alt + Reserve": st.column_config.NumberColumn("Alt + Reserve", format="%d gal"),
             "Landing Min": st.column_config.NumberColumn("Landing Min", format="%d gal"),
