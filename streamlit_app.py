@@ -7,6 +7,7 @@ import html
 import importlib
 import inspect
 import math
+import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -18,7 +19,14 @@ import deployment_bootstrap as _deployment_bootstrap
 # evict every cached repo module before any application imports are resolved.
 importlib.reload(_deployment_bootstrap)
 _APP_ROOT = Path(__file__).resolve().parent
-_APP_RELEASE = (_APP_ROOT / "RELEASE_VERSION").read_text(encoding="utf-8").strip()
+# Same precedence as app_version.resolve_running_version: env override first, then
+# the file, degrading to a sentinel instead of crashing every rerun at startup.
+_APP_RELEASE = os.getenv("APP_RELEASE_VERSION", "").strip()
+if not _APP_RELEASE:
+    try:
+        _APP_RELEASE = (_APP_ROOT / "RELEASE_VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        _APP_RELEASE = "unversioned"
 _deployment_bootstrap.refresh_repo_modules_for_release(
     repo_root=_APP_ROOT,
     release=_APP_RELEASE,

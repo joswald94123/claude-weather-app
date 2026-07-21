@@ -3,8 +3,8 @@ REM Thin repo-local launcher that delegates startup behavior to the shared codex
 REM Keep this file simple so the shared launcher remains the single source of truth.
 setlocal
 where pwsh.exe >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File "C:\Users\JackOswald\OneDrive - ISOThrive Inc\codex-shared\Start-CodexRepo.ps1" -RepoPath "C:\Users\JackOswald\OneDrive - ISOThrive Inc\Personal\Flying\Weather\CODEX-Weather-Brief" %*
-) else (
-    powershell.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File "C:\Users\JackOswald\OneDrive - ISOThrive Inc\codex-shared\Start-CodexRepo.ps1" -RepoPath "C:\Users\JackOswald\OneDrive - ISOThrive Inc\Personal\Flying\Weather\CODEX-Weather-Brief" %*
+if %ERRORLEVEL% NEQ 0 (
+    echo PowerShell 7 ^(pwsh.exe^) is required and was not found on PATH. Install it from https://aka.ms/powershell and retry.
+    exit /b 1
 )
+pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File "C:\Users\JackOswald\OneDrive - ISOThrive Inc\codex-shared\Start-CodexRepo.ps1" -RepoPath "C:\Users\JackOswald\OneDrive - ISOThrive Inc\Personal\Flying\Weather\Claude Fable Review\claude-weather-app" %*

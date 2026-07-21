@@ -24,8 +24,12 @@ in the July 2026 review series (`Deep_Sweep_2026-07-20.md` and the
   292-gal usable-capacity cap on fuel load and uplifts with a visible trim
   warning; hero wind parenthetical derived from computed winds; per-leg wind
   models for chained legs; falsy-track cleanup.
-- FIX-08: RELEASE_VERSION guarded read; FAA failure-path tests; clean 3.13 lock
-  regen; unknown-hazard-type rendering; workflow timeouts.
+- DONE (v.24) FIX-08: guarded RELEASE_VERSION read with env-override precedence
+  matching app_version; FAA missing-anchor failure tests; unknown hazard types
+  render generically in the profile (and an explicit empty visible-set now
+  means hide-all); workflow timeout-minutes; snapshot env-flag comment;
+  launcher requires pwsh and targets this repo. Deferred: clean 3.13 lock
+  regeneration (pins work; regenerate next time dependencies change).
 - DONE (v.23) FIX-05 remainder: spinners over per-leg briefs, destination
   rings, and the vertical profile; widget default+session-state warnings
   removed (cruise, ETD, hazard-detail); ignored per-leg alternate entries

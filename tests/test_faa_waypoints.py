@@ -12,6 +12,7 @@ import pytest
 
 import faa_waypoints
 from faa_waypoints import _airport_index_from_zip_bytes, _load_fallback_snapshot
+from faa_waypoints import _choose_cycle_page, _extract_cycle_zip_urls
 from faa_waypoints import get_faa_cycle_urls, resolve_faa_waypoint
 
 
@@ -391,3 +392,22 @@ def test_resolver_reports_both_live_and_fallback_failures(tmp_path):
     assert "FAA network unavailable" in message
     assert "fallback also failed" in message
     assert "fallback snapshot is unreadable" in message
+
+
+def test_empty_nasr_index_raises_actionable_error():
+    """Verify an index page without cycle links fails with a named error."""
+
+    with pytest.raises(RuntimeError, match="did not expose any cycle pages"):
+        _choose_cycle_page([], reference_date=dt.date(2026, 7, 20))
+
+
+def test_cycle_page_missing_csv_anchors_names_the_gaps():
+    """Verify a cycle page without the NAV download names the missing product."""
+
+    html_page = (
+        '<a href="/files/2026-07-09_APT_CSV.zip">apt</a>'
+        '<a href="/files/2026-07-09_FIX_CSV.zip">fix</a>'
+    )
+
+    with pytest.raises(RuntimeError, match="missing expected CSV downloads: nav"):
+        _extract_cycle_zip_urls(html_page, base_url="https://example.com/cycle/")

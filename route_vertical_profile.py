@@ -7,6 +7,18 @@ import math
 
 from weather_core import RouteVerticalProfile, RouteVerticalProfileHazardSpan
 
+# Known types get first-class styling and legend order; spans with any other
+# hazard_type still render with the generic style rather than disappearing.
+KNOWN_HAZARD_TYPES = (
+    "icing",
+    "turbulence",
+    "convective",
+    "ifr",
+    "mountain_obscuration",
+    "surface_wind",
+    "llws",
+)
+
 
 # Styling is kept in code so the Streamlit view and tests share one rendering path.
 def _hazard_style(span: RouteVerticalProfileHazardSpan) -> tuple[str, str, str]:
@@ -242,15 +254,16 @@ def build_route_vertical_profile_svg(
     plot_height = max(float(height) - top_pad - bottom_pad, 10.0)
     mission_distance_nm = max(vertical_profile.mission_distance_nm, 1.0)
     display_ceiling_ft = _display_ceiling_ft(vertical_profile)
-    active_hazard_types = {value.lower() for value in visible_hazard_types} if visible_hazard_types else {
-        "icing",
-        "turbulence",
-        "convective",
-        "ifr",
-        "mountain_obscuration",
-        "surface_wind",
-        "llws",
-    }
+    # Render every type present in the data, not just the known set, so a novel
+    # hazard_type from a feed change cannot silently disappear from the profile.
+    hazard_types_in_order = list(KNOWN_HAZARD_TYPES) + sorted(
+        {span.hazard_type.lower() for span in vertical_profile.hazard_spans} - set(KNOWN_HAZARD_TYPES)
+    )
+    active_hazard_types = (
+        {value.lower() for value in visible_hazard_types}
+        if visible_hazard_types is not None
+        else set(hazard_types_in_order)
+    )
     visible_hazard_spans = [
         span for span in vertical_profile.hazard_spans if span.hazard_type.lower() in active_hazard_types
     ]
@@ -365,15 +378,7 @@ def build_route_vertical_profile_svg(
         )
 
     hazard_layers = []
-    for hazard_type in (
-        "icing",
-        "turbulence",
-        "convective",
-        "ifr",
-        "mountain_obscuration",
-        "surface_wind",
-        "llws",
-    ):
+    for hazard_type in hazard_types_in_order:
         fills = hazard_fills.get(hazard_type, [])
         annotations = hazard_annotations.get(hazard_type, [])
         if not fills and not annotations:

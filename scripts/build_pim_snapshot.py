@@ -12,6 +12,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+# Must be set before importing daher_pim_tables: the flag makes its cached snapshot
+# loader return None so parse_* functions re-parse the PDF instead of short-circuiting.
 os.environ["CODEX_REBUILD_PIM_SNAPSHOT"] = "1"
 
 from daher_pim_tables import (  # noqa: E402
